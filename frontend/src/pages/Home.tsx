@@ -1,5 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
+import "./home.css";
 
 type ScrapedPage = {
   id: number;
@@ -35,47 +36,7 @@ export default function Home() {
     "Images",
     "Videos",
   ];
-const scrapeLinkedPage = async (page: ScrapedPage) => {
-  if (page.category !== "linked-page") {
-    setSelectedPage(page);
-    return;
-  }
 
-  setLoading(true);
-  setLogs((prev) => [...prev, `GET ${page.url}`]);
-
-  try {
-    const response = await axios.post("http://127.0.0.1:5000/api/scrape", {
-      url: page.url,
-    });
-
-    const result = response.data;
-
-    const updatedPage: ScrapedPage = {
-      ...page,
-      title: result.title,
-      paragraph_count: result.paragraph_count,
-      preview: result.preview,
-      html: result.preview.join("\n\n"),
-      links: result.links || [],
-      images: result.images || [],
-      videos: result.videos || [],
-    };
-
-    const updatedPages = pages.map((p) =>
-      p.id === page.id ? updatedPage : p
-    );
-
-    setPages(updatedPages);
-    setSelectedPage(updatedPage);
-    setLogs((prev) => [...prev, `SUCCESS ${page.url}`]);
-  } catch (error) {
-    console.error(error);
-    setLogs((prev) => [...prev, `ERROR scraping ${page.url}`]);
-  } finally {
-    setLoading(false);
-  }
-};
   const handleScrapeSite = async () => {
     if (!rootUrl.trim()) return;
 
@@ -127,27 +88,49 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
     }
   };
 
+  const scrapeLinkedPage = async (page: ScrapedPage) => {
+    if (page.category !== "linked-page") {
+      setSelectedPage(page);
+      return;
+    }
+
+    setLoading(true);
+    setLogs((prev) => [...prev, `GET ${page.url}`]);
+
+    try {
+      const response = await axios.post("http://127.0.0.1:5000/api/scrape", {
+        url: page.url,
+      });
+
+      const result = response.data;
+
+      const updatedPage: ScrapedPage = {
+        ...page,
+        title: result.title,
+        paragraph_count: result.paragraph_count,
+        preview: result.preview,
+        html: result.preview.join("\n\n"),
+        links: result.links || [],
+        images: result.images || [],
+        videos: result.videos || [],
+      };
+
+      const updatedPages = pages.map((p) => (p.id === page.id ? updatedPage : p));
+
+      setPages(updatedPages);
+      setSelectedPage(updatedPage);
+      setLogs((prev) => [...prev, `SUCCESS ${page.url}`]);
+    } catch (error) {
+      console.error(error);
+      setLogs((prev) => [...prev, `ERROR scraping ${page.url}`]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "grid",
-        gridTemplateRows: "64px 1fr 120px 32px",
-        background: "#e5e7eb",
-        color: "#111827",
-        fontFamily: "Segoe UI, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          padding: "12px 16px",
-          borderBottom: "1px solid #cbd5e1",
-          background: "#f8fafc",
-        }}
-      >
+    <div className="scraper-app">
+      <div className="scraper-toolbar">
         <div style={{ fontWeight: 700, fontSize: "18px", minWidth: "150px" }}>
           Spider Scraper
         </div>
@@ -155,16 +138,9 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
         <label style={{ fontSize: "14px", color: "#374151" }}>Root:</label>
 
         <input
+          className="scraper-root-input"
           value={rootUrl}
           onChange={(e) => setRootUrl(e.target.value)}
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            border: "1px solid #cbd5e1",
-            borderRadius: "8px",
-            background: "#fff",
-            fontSize: "14px",
-          }}
         />
 
         <button
@@ -179,6 +155,7 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
             cursor: "pointer",
             fontSize: "13px",
             fontWeight: 600,
+            whiteSpace: "nowrap",
           }}
         >
           {loading ? "Scraping..." : "Scrape Site"}
@@ -192,9 +169,11 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
               borderRadius: "8px",
               border: "1px solid #cbd5e1",
               background: "#ffffff",
+              color: "#111827",
               cursor: "pointer",
               fontSize: "13px",
               fontWeight: 600,
+              whiteSpace: "nowrap",
             }}
           >
             {btn}
@@ -202,34 +181,18 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
         ))}
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "42% 58%",
-          gap: "12px",
-          padding: "12px",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            background: "#ffffff",
-            border: "1px solid #cbd5e1",
-            borderRadius: "10px",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+      <div className="scraper-main">
+        <div className="scraper-left">
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "42% 18% 40%",
+              gridTemplateColumns: "48% 16% 36%",
               padding: "10px 12px",
               background: "#f1f5f9",
               borderBottom: "1px solid #cbd5e1",
               fontWeight: 700,
               fontSize: "13px",
+              minWidth: "900px",
             }}
           >
             <div>Title</div>
@@ -237,7 +200,13 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
             <div>URL</div>
           </div>
 
-          <div style={{ overflowY: "auto", flex: 1 }}>
+          <div
+            style={{
+              overflowY: "auto",
+              overflowX: "auto",
+              flex: 1,
+            }}
+          >
             {pages.length === 0 ? (
               <div style={{ padding: "16px", color: "#6b7280", fontSize: "14px" }}>
                 No pages scraped yet.
@@ -251,16 +220,18 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
                     onClick={() => scrapeLinkedPage(page)}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "42% 18% 40%",
+                      gridTemplateColumns: "48% 16% 36%",
                       padding: "10px 12px",
                       borderBottom: "1px solid #e5e7eb",
                       cursor: "pointer",
                       background: selected ? "#dbeafe" : "#ffffff",
                       color: selected ? "#1d4ed8" : "#111827",
                       fontSize: "13px",
+                      minWidth: "900px",
                     }}
                   >
                     <div
+                      title={page.title}
                       style={{
                         whiteSpace: "nowrap",
                         overflow: "hidden",
@@ -269,8 +240,18 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
                     >
                       {page.title}
                     </div>
-                    <div>{page.category}</div>
                     <div
+                      title={page.category}
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {page.category}
+                    </div>
+                    <div
+                      title={page.url}
                       style={{
                         whiteSpace: "nowrap",
                         overflow: "hidden",
@@ -286,16 +267,7 @@ const scrapeLinkedPage = async (page: ScrapedPage) => {
           </div>
         </div>
 
-        <div
-          style={{
-            background: "#ffffff",
-            border: "1px solid #cbd5e1",
-            borderRadius: "10px",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        <div className="scraper-right">
           <div
             style={{
               padding: "12px 16px",
@@ -434,16 +406,7 @@ ${selectedPage.preview.join("\n\n")}`}
         </div>
       </div>
 
-      <div
-        style={{
-          background: "#ffffff",
-          borderTop: "1px solid #cbd5e1",
-          padding: "10px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-        }}
-      >
+      <div className="scraper-log">
         <div style={{ fontWeight: 700, fontSize: "13px" }}>Activity Log</div>
         <div
           style={{
@@ -465,18 +428,7 @@ ${selectedPage.preview.join("\n\n")}`}
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 12px",
-          background: "#dcfce7",
-          borderTop: "1px solid #86efac",
-          fontSize: "13px",
-          fontWeight: 600,
-        }}
-      >
+      <div className="scraper-footer">
         <div>Pages scraped: {pages.length}</div>
         <div>{loading ? "Working..." : "Done"}</div>
       </div>
