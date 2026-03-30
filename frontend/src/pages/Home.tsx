@@ -10,6 +10,8 @@ type ScrapedPage = {
   preview: string[];
   html?: string;
   links?: string[];
+  images?: string[];
+  videos?: string[];
 };
 
 export default function Home() {
@@ -30,7 +32,8 @@ export default function Home() {
     "Tables",
     "JSON",
     "Regex Search",
-    "Scraped Images",
+    "Images",
+    "Videos",
   ];
 
   const handleScrapeSite = async () => {
@@ -55,7 +58,9 @@ export default function Home() {
           paragraph_count: result.paragraph_count,
           preview: result.preview,
           html: result.preview.join("\n\n"),
-          links: result.links,
+          links: result.links || [],
+          images: result.images || [],
+          videos: result.videos || [],
         },
         ...(result.links || []).map((link: string, index: number) => ({
           id: Date.now() + index + 1,
@@ -66,6 +71,8 @@ export default function Home() {
           preview: [],
           html: "",
           links: [],
+          images: [],
+          videos: [],
         })),
       ];
 
@@ -304,7 +311,7 @@ export default function Home() {
           >
             {!selectedPage ? (
               <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
-            ) : (
+            ) : activeTab === "Text View" ? (
               <pre
                 style={{
                   margin: 0,
@@ -316,18 +323,72 @@ export default function Home() {
 Category: ${selectedPage.category}
 URL: ${selectedPage.url}
 Paragraph Count: ${selectedPage.paragraph_count}
-Active Tab: ${activeTab}
 
 Preview:
-${selectedPage.preview.join("\n\n")}${
-  selectedPage.links && selectedPage.links.length > 0
-    ? `
-
-Links Found:
-${selectedPage.links.join("\n")}`
-    : ""
-}`}
+${selectedPage.preview.join("\n\n")}`}
               </pre>
+            ) : activeTab === "Videos" ? (
+              <div>
+                <h3 style={{ marginTop: 0 }}>Scraped Videos</h3>
+                {selectedPage.videos && selectedPage.videos.length > 0 ? (
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    {selectedPage.videos.map((video, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          padding: "12px",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "8px",
+                          background: "#f8fafc",
+                        }}
+                      >
+                        <a href={video} target="_blank" rel="noreferrer">
+                          {video}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "#6b7280" }}>No videos found on this page.</div>
+                )}
+              </div>
+            ) : activeTab === "Images" ? (
+              <div>
+                <h3 style={{ marginTop: 0 }}>Scraped Images</h3>
+                {selectedPage.images && selectedPage.images.length > 0 ? (
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    {selectedPage.images.map((image, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          padding: "12px",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "8px",
+                          background: "#f8fafc",
+                        }}
+                      >
+                        <a href={image} target="_blank" rel="noreferrer">
+                          {image}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "#6b7280" }}>No images found on this page.</div>
+                )}
+              </div>
+            ) : activeTab === "JSON" ? (
+              <pre
+                style={{
+                  margin: 0,
+                  fontFamily: "Consolas, monospace",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {JSON.stringify(selectedPage, null, 2)}
+              </pre>
+            ) : (
+              <div style={{ color: "#6b7280" }}>This tab is not wired up yet.</div>
             )}
           </div>
         </div>
