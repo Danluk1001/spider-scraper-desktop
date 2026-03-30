@@ -1,6 +1,8 @@
-import { useState, type CSSProperties } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import axios from "axios";
+import { toPng } from "html-to-image";
 import "../home.css";
+import { SitemapGraphView } from "../components/SitemapGraphView";
 
 /**
  * Use relative `/api` so Vite (and preview) can proxy to Flask — avoids CORS and
@@ -8,11 +10,15 @@ import "../home.css";
  * Override with VITE_API_BASE if the API is on another origin (no trailing slash).
  */
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
-/** Full-site crawl can run for a long time; 0 = no axios timeout. */
-const CRAWL_TIMEOUT_MS = 0;
 
-/** ZIP builds can take several minutes when many video URLs are probed. */
-const ZIP_EXPORT_TIMEOUT_MS = 15 * 60 * 1000;
+/** Per-page scrape timeout (matches backend REQUEST_TIMEOUT ~30s with headroom). */
+const PER_PAGE_SCRAPE_TIMEOUT_MS = 45_000;
+
+/**
+ * ZIP export downloads each media URL on the server; large video sets can take
+ * many minutes. One hour avoids axios aborting before the backend finishes.
+ */
+const ZIP_EXPORT_TIMEOUT_MS = 60 * 60 * 1000;
 const FETCH_FILE_TIMEOUT_MS = 3 * 60 * 1000;
 
 type MediaProvenanceEntry = {
@@ -20,20 +26,766 @@ type MediaProvenanceEntry = {
   sourcePageUrl: string;
 };
 
+/** Stable graph node id (UUID). Used in edges and flowchart views. */
+type NodeId = string;
+
+/** Directed link parent → child (same-site crawl discovery or root fan-out). */
+type SitemapEdge = {
+  source: NodeId;
+  target: NodeId;
+};
+
+/** HTTP health from crawl / probe (matches backend `status_label`). */
+type PageStatusLabel = "ok" | "redirect" | "broken" | "timeout_error";
+
 type ScrapedPage = {
-  id: number;
+  nodeId: NodeId;
   title: string;
   category: string;
   url: string;
   paragraph_count: number;
   preview: string[];
+  /** Response status when known (0 = unknown after probe failure). */
+  http_status?: number;
+  status_label?: PageStatusLabel;
+  /** SEO / social / structure (from backend `extract_metadata`). */
+  meta_description?: string | null;
+  canonical_url?: string | null;
+  og_title?: string | null;
+  og_description?: string | null;
+  og_image?: string | null;
+  twitter_title?: string | null;
+  twitter_description?: string | null;
+  h1?: string[];
+  h2?: string[];
+  /** Flattened paragraph text (for Text View / legacy). */
   html?: string;
+  /** Full response body HTML from the server (HTML tab). */
+  raw_html?: string;
+  /** Inline `<style>` + linked stylesheet markers from the page (CSS tab). */
+  raw_css?: string;
+  /** Inline scripts + external `script src` markers (JavaScript tab). */
+  raw_js?: string;
   links?: string[];
   images?: string[];
   videos?: string[];
   imageSources?: MediaProvenanceEntry[];
   videoSources?: MediaProvenanceEntry[];
 };
+
+const VALID_STATUS_LABELS: PageStatusLabel[] = [
+  "ok",
+  "redirect",
+  "broken",
+  "timeout_error",
+];
+
+function parseStatusLabel(v: unknown): PageStatusLabel | undefined {
+  if (typeof v !== "string") return undefined;
+  return VALID_STATUS_LABELS.includes(v as PageStatusLabel)
+    ? (v as PageStatusLabel)
+    : undefined;
+}
+
+function statusLabelDisplay(v: PageStatusLabel | undefined): string {
+  if (!v) return "—";
+  if (v === "timeout_error") return "timeout / error";
+  return v;
+}
+
+function StatusBadge({
+  label,
+  code,
+}: {
+  label?: PageStatusLabel;
+  code?: number;
+}) {
+  const palette: Record<
+    PageStatusLabel,
+    { bg: string; fg: string; border: string }
+  > = {
+    ok: { bg: "#dcfce7", fg: "#166534", border: "#86efac" },
+    redirect: { bg: "#fef9c3", fg: "#854d0e", border: "#fde047" },
+    broken: { bg: "#fee2e2", fg: "#991b1b", border: "#fecaca" },
+    timeout_error: { bg: "#f3e8ff", fg: "#6b21a8", border: "#d8b4fe" },
+  };
+  const colors =
+    label && label in palette ? palette[label] : { bg: "#f1f5f9", fg: "#475569", border: "#cbd5e1" };
+  const showCode = typeof code === "number" && code > 0;
+  return (
+    <span
+      title={showCode ? `HTTP ${code} · ${statusLabelDisplay(label)}` : statusLabelDisplay(label)}
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: "8px",
+        fontSize: "11px",
+        fontWeight: 600,
+        border: `1px solid ${colors.border}`,
+        background: colors.bg,
+        color: colors.fg,
+        whiteSpace: "nowrap",
+        maxWidth: "100%",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {showCode ? `${code} ` : ""}
+      {statusLabelDisplay(label)}
+    </span>
+  );
+}
+
+function parseOptionalMetaString(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length === 0 ? undefined : t;
+}
+
+function parseHeadingList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+}
+
+function MetaFieldRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  const has = value != null && String(value).trim() !== "";
+  return (
+    <div style={{ marginBottom: "14px" }}>
+      <div
+        style={{
+          fontSize: "11px",
+          fontWeight: 600,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: "14px",
+          color: has ? "#0f172a" : "#94a3b8",
+          marginTop: "4px",
+          wordBreak: "break-word",
+          lineHeight: 1.5,
+        }}
+      >
+        {has ? value : "—"}
+      </div>
+    </div>
+  );
+}
+
+function HeadingBlock({
+  label,
+  items,
+}: {
+  label: string;
+  items: string[] | undefined;
+}) {
+  const list = items?.filter((s) => s.trim().length > 0) ?? [];
+  return (
+    <div style={{ marginBottom: "14px" }}>
+      <div
+        style={{
+          fontSize: "11px",
+          fontWeight: 600,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {label}
+      </div>
+      {list.length === 0 ? (
+        <div style={{ fontSize: "13px", color: "#94a3b8", marginTop: "6px" }}>None found</div>
+      ) : (
+        <ol
+          style={{
+            margin: "8px 0 0 0",
+            paddingLeft: "20px",
+            color: "#0f172a",
+            fontSize: "14px",
+            lineHeight: 1.5,
+          }}
+        >
+          {list.map((t, i) => (
+            <li key={i} style={{ marginBottom: "4px" }}>
+              {t}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function OgImagePreview({ url }: { url: string | null | undefined }) {
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) return null;
+  return (
+    <div style={{ marginTop: "8px" }}>
+      <img
+        src={url}
+        alt=""
+        style={{
+          maxWidth: "100%",
+          maxHeight: "200px",
+          borderRadius: "8px",
+          border: "1px solid #e2e8f0",
+          objectFit: "contain",
+          background: "#f8fafc",
+        }}
+        onError={() => setFailed(true)}
+        loading="lazy"
+      />
+    </div>
+  );
+}
+
+function PageMetadataPanel({ page }: { page: ScrapedPage }) {
+  return (
+    <div style={{ maxWidth: "640px" }}>
+      <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", color: "#0f172a" }}>Page metadata</h3>
+      <p style={{ fontSize: "13px", color: "#64748b", margin: "0 0 20px 0", lineHeight: 1.5 }}>
+        Values come from <code style={{ fontSize: "12px" }}>&lt;meta&gt;</code>,{" "}
+        <code style={{ fontSize: "12px" }}>&lt;link rel=&quot;canonical&quot;&gt;</code>, Open Graph,
+        Twitter Cards, and <code style={{ fontSize: "12px" }}>&lt;h1&gt;</code> /{" "}
+        <code style={{ fontSize: "12px" }}>&lt;h2&gt;</code> tags. Empty fields show an em dash.
+      </p>
+
+      <MetaFieldRow label="Meta description" value={page.meta_description} />
+      <MetaFieldRow label="Canonical URL" value={page.canonical_url} />
+
+      <div
+        style={{
+          margin: "20px 0 12px 0",
+          fontSize: "12px",
+          fontWeight: 700,
+          color: "#334155",
+          letterSpacing: "0.02em",
+        }}
+      >
+        Open Graph
+      </div>
+      <MetaFieldRow label="og:title" value={page.og_title} />
+      <MetaFieldRow label="og:description" value={page.og_description} />
+      <div style={{ marginBottom: "14px" }}>
+        <div
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            color: "#64748b",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          og:image
+        </div>
+        {page.og_image != null && String(page.og_image).trim() !== "" ? (
+          <>
+            <div
+              style={{
+                fontSize: "13px",
+                color: "#2563eb",
+                marginTop: "4px",
+                wordBreak: "break-all",
+              }}
+            >
+              <a href={page.og_image} target="_blank" rel="noreferrer">
+                {page.og_image}
+              </a>
+            </div>
+            <OgImagePreview url={page.og_image} />
+          </>
+        ) : (
+          <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "4px" }}>—</div>
+        )}
+      </div>
+
+      <div
+        style={{
+          margin: "20px 0 12px 0",
+          fontSize: "12px",
+          fontWeight: 700,
+          color: "#334155",
+          letterSpacing: "0.02em",
+        }}
+      >
+        Twitter
+      </div>
+      <MetaFieldRow label="twitter:title" value={page.twitter_title} />
+      <MetaFieldRow label="twitter:description" value={page.twitter_description} />
+
+      <div
+        style={{
+          margin: "20px 0 12px 0",
+          fontSize: "12px",
+          fontWeight: 700,
+          color: "#334155",
+          letterSpacing: "0.02em",
+        }}
+      >
+        Headings
+      </div>
+      <HeadingBlock label="H1" items={page.h1} />
+      <HeadingBlock label="H2" items={page.h2} />
+    </div>
+  );
+}
+
+/** Scrollable monospace preview + copy (HTML / CSS / JS tabs). */
+function CodePreviewPanel({
+  title,
+  content,
+  emptyMessage,
+}: {
+  title: string;
+  content: string | undefined;
+  emptyMessage: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const text = content?.trim() ?? "";
+  const has = text.length > 0;
+
+  const handleCopy = async () => {
+    if (!has || content == null) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard may be denied in non-secure contexts */
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        padding: "16px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          marginBottom: "10px",
+          flexWrap: "wrap",
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>{title}</span>
+        <button
+          type="button"
+          disabled={!has}
+          onClick={() => void handleCopy()}
+          style={{
+            padding: "6px 12px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: has ? "#ffffff" : "#f1f5f9",
+            color: "#374151",
+            fontSize: "12px",
+            fontWeight: 600,
+            cursor: has ? "pointer" : "not-allowed",
+          }}
+        >
+          {copied ? "Copied" : "Copy to clipboard"}
+        </button>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          border: "1px solid #e2e8f0",
+          borderRadius: "8px",
+          overflow: "auto",
+          background: "#0f172a",
+        }}
+      >
+        <pre
+          style={{
+            margin: 0,
+            padding: "12px 14px",
+            fontFamily: "Consolas, ui-monospace, monospace",
+            fontSize: "12px",
+            lineHeight: 1.45,
+            color: "#e2e8f0",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {has ? content : emptyMessage}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+type RegexSearchSource = "html" | "preview";
+type RegexPresetId = "emails" | "phones" | "pdf" | "social" | "custom";
+
+const REGEX_PRESET_DEF: Record<
+  Exclude<RegexPresetId, "custom">,
+  { label: string; source: string; flags: string }
+> = {
+  emails: {
+    label: "Emails",
+    source: String.raw`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`,
+    flags: "g",
+  },
+  phones: {
+    label: "Phone numbers",
+    source: String.raw`(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}|\+?\d{10,15}\b`,
+    flags: "g",
+  },
+  pdf: {
+    label: "PDF links",
+    source: String.raw`https?://[^\s"'<>]+\.pdf(?:\?[^\s"'<>]*)?`,
+    flags: "gi",
+  },
+  social: {
+    label: "Social links",
+    source: String.raw`https?://(?:www\.)?(?:twitter\.com|x\.com|t\.co|facebook\.com|fb\.com|linkedin\.com|instagram\.com|tiktok\.com|youtube\.com|youtu\.be|reddit\.com|pinterest\.com|github\.com|threads\.net|snapchat\.com|medium\.com)/[^\s"'<>]*`,
+    flags: "gi",
+  },
+};
+
+function compileSearchRegex(
+  preset: RegexPresetId,
+  customPattern: string,
+): { ok: true; regex: RegExp } | { ok: false; message: string } {
+  if (preset === "custom") {
+    const trimmed = customPattern.trim();
+    if (!trimmed) {
+      return { ok: false, message: "Enter a regex pattern." };
+    }
+    try {
+      let flags = "";
+      let body = trimmed;
+      const m = /^\/(.+)\/([a-z]*)$/i.exec(trimmed);
+      if (m) {
+        body = m[1];
+        flags = m[2] ?? "";
+      }
+      if (!flags.includes("g")) flags += "g";
+      return { ok: true, regex: new RegExp(body, flags) };
+    } catch {
+      return { ok: false, message: "Invalid regular expression." };
+    }
+  }
+  const def = REGEX_PRESET_DEF[preset];
+  try {
+    return { ok: true, regex: new RegExp(def.source, def.flags) };
+  } catch {
+    return { ok: false, message: "Invalid preset (internal error)." };
+  }
+}
+
+function collectRegexMatches(text: string, regex: RegExp): string[] {
+  const out: string[] = [];
+  const r = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : regex.flags + "g");
+  for (const m of text.matchAll(r)) {
+    const full = m[0];
+    if (full) out.push(full);
+  }
+  return out;
+}
+
+function RegexSearchPanel({ page }: { page: ScrapedPage }) {
+  const [source, setSource] = useState<RegexSearchSource>("html");
+  const [preset, setPreset] = useState<RegexPresetId>("emails");
+  const [customPattern, setCustomPattern] = useState("");
+
+  const haystack = useMemo(() => {
+    if (source === "html") {
+      const h = page.raw_html;
+      return typeof h === "string" && h.length > 0 ? h : "";
+    }
+    return page.preview.join("\n\n");
+  }, [page.preview, page.raw_html, source]);
+
+  const compiled = useMemo(
+    () => compileSearchRegex(preset, customPattern),
+    [preset, customPattern],
+  );
+
+  const { matches, totalMatchCount } = useMemo(() => {
+    if (!compiled.ok || !haystack) {
+      return { matches: [] as string[], totalMatchCount: 0 };
+    }
+    const all = collectRegexMatches(haystack, compiled.regex);
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const s of all) {
+      if (seen.has(s)) continue;
+      seen.add(s);
+      deduped.push(s);
+    }
+    return { matches: deduped, totalMatchCount: all.length };
+  }, [compiled, haystack]);
+
+  const hasContent = haystack.length > 0;
+  const errorMsg = !compiled.ok ? compiled.message : null;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        padding: "16px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ flexShrink: 0, marginBottom: "12px" }}>
+        <div
+          style={{
+            fontSize: "14px",
+            fontWeight: 600,
+            color: "#0f172a",
+            marginBottom: "10px",
+          }}
+        >
+          Regex search
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
+          <label style={{ fontSize: "12px", color: "#475569", fontWeight: 600 }}>Source</label>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value as RegexSearchSource)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: "8px",
+              border: "1px solid #cbd5e1",
+              fontSize: "12px",
+              background: "#fff",
+            }}
+          >
+            <option value="html">Raw HTML (if available)</option>
+            <option value="preview">Preview text</option>
+          </select>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+          <label style={{ fontSize: "12px", color: "#475569", fontWeight: 600 }}>Preset</label>
+          <select
+            value={preset}
+            onChange={(e) => setPreset(e.target.value as RegexPresetId)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: "8px",
+              border: "1px solid #cbd5e1",
+              fontSize: "12px",
+              background: "#fff",
+              minWidth: "160px",
+            }}
+          >
+            {(Object.keys(REGEX_PRESET_DEF) as Array<Exclude<RegexPresetId, "custom">>).map((id) => (
+              <option key={id} value={id}>
+                {REGEX_PRESET_DEF[id].label}
+              </option>
+            ))}
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        {preset === "custom" ? (
+          <div style={{ marginBottom: "10px" }}>
+            <label style={{ display: "block", fontSize: "12px", color: "#475569", fontWeight: 600, marginBottom: "6px" }}>
+              Pattern (optionally wrap as /pattern/flags)
+            </label>
+            <input
+              type="text"
+              value={customPattern}
+              onChange={(e) => setCustomPattern(e.target.value)}
+              placeholder='e.g. \b\d{5}\b or /foo/gi'
+              spellCheck={false}
+              autoComplete="off"
+              style={{
+                width: "100%",
+                maxWidth: "560px",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                fontFamily: "Consolas, ui-monospace, monospace",
+                fontSize: "12px",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+        ) : null}
+        <div style={{ fontSize: "12px", color: "#64748b" }}>
+          {!hasContent
+            ? source === "html"
+              ? "No raw HTML for this page — switch to Preview text or re-crawl."
+              : "No preview text."
+            : null}
+          {hasContent && errorMsg ? (
+            <span style={{ color: "#b91c1c", fontWeight: 600 }}>{errorMsg}</span>
+          ) : null}
+          {hasContent && !errorMsg ? (
+            <span>
+              {matches.length} unique match{matches.length === 1 ? "" : "es"}
+              {totalMatchCount !== matches.length ? ` (${totalMatchCount} total)` : ""}
+              {" · "}
+              {source === "html" ? "raw HTML" : "preview text"} ·{" "}
+              {preset === "custom" ? "custom" : REGEX_PRESET_DEF[preset as Exclude<RegexPresetId, "custom">].label}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          border: "1px solid #e2e8f0",
+          borderRadius: "8px",
+          overflow: "auto",
+          background: "#f8fafc",
+        }}
+      >
+        {!hasContent || errorMsg ? (
+          <div style={{ padding: "14px", color: "#64748b", fontSize: "13px" }}>
+            {errorMsg ? "Fix the pattern above to see matches." : "Nothing to search."}
+          </div>
+        ) : matches.length === 0 ? (
+          <div style={{ padding: "14px", color: "#64748b", fontSize: "13px" }}>No matches.</div>
+        ) : (
+          <ul style={{ margin: 0, padding: "10px 14px", listStyle: "none" }}>
+            {matches.map((m, i) => (
+              <li
+                key={`${i}-${m.slice(0, 64)}`}
+                style={{
+                  padding: "8px 10px",
+                  marginBottom: "6px",
+                  background: "#ffffff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "6px",
+                  fontFamily: "Consolas, ui-monospace, monospace",
+                  fontSize: "12px",
+                  lineHeight: 1.45,
+                  wordBreak: "break-all",
+                  color: "#0f172a",
+                }}
+              >
+                <span style={{ color: "#94a3b8", marginRight: "8px", userSelect: "none" }}>{i + 1}.</span>
+                {m}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function newNodeId(): NodeId {
+  return crypto.randomUUID();
+}
+
+function edgeKey(source: NodeId, target: NodeId): string {
+  return `${source}\t${target}`;
+}
+
+function pushEdge(
+  edges: SitemapEdge[],
+  seen: Set<string>,
+  source: NodeId,
+  target: NodeId,
+): void {
+  const k = edgeKey(source, target);
+  if (seen.has(k)) return;
+  seen.add(k);
+  edges.push({ source, target });
+}
+
+/** Old snapshots may use numeric `id` only — assign a stable nodeId for graph + selection. */
+function normalizeLoadedPage(p: ScrapedPage & { id?: number }): ScrapedPage {
+  const nodeId =
+    p.nodeId && String(p.nodeId).length > 0
+      ? p.nodeId
+      : typeof p.id === "number"
+        ? `legacy-${p.id}`
+        : newNodeId();
+  const { id: _omit, ...rest } = p;
+  return { ...rest, nodeId };
+}
+
+/** POST /api/sitemap/save request body */
+type SitemapSavePayload = {
+  rootUrl: string;
+  pages: ScrapedPage[];
+  edges: SitemapEdge[];
+  selectedPage: ScrapedPage | null;
+  logs: string[];
+  /** ISO 8601 timestamp */
+  savedAt: string;
+};
+
+/** POST /api/sitemap/save success JSON */
+type SitemapSaveResponse = {
+  ok: boolean;
+  filename: string;
+  path: string;
+};
+
+/** GET /api/sitemap/list */
+type SitemapListFile = {
+  filename: string;
+  path: string;
+  modified: string;
+};
+
+type SitemapListResponse = {
+  files: SitemapListFile[];
+};
+
+/** GET /api/sitemap/load — same shape as saved JSON */
+type SitemapSnapshot = {
+  rootUrl?: string;
+  pages?: ScrapedPage[];
+  edges?: SitemapEdge[];
+  selectedPage?: ScrapedPage | null;
+  logs?: string[];
+  savedAt?: string;
+};
+
+/** Pick the row to highlight after load: nodeId, legacy id, then url, else first page. */
+function restoreSelectedPage(
+  loadedPages: ScrapedPage[],
+  saved: ScrapedPage | null | undefined,
+): ScrapedPage | null {
+  if (loadedPages.length === 0) return null;
+  if (saved == null) return loadedPages[0];
+  if (saved.nodeId) {
+    const byNode = loadedPages.find((p) => p.nodeId === saved.nodeId);
+    if (byNode) return byNode;
+  }
+  const legacy = saved as ScrapedPage & { id?: number };
+  if (typeof legacy.id === "number") {
+    const byLegacy = loadedPages.find((p) => p.nodeId === `legacy-${legacy.id}`);
+    if (byLegacy) return byLegacy;
+  }
+  const byUrl = loadedPages.find((p) => p.url === saved.url);
+  if (byUrl) return byUrl;
+  return loadedPages[0];
+}
 
 function provenanceForMedia(
   mediaUrls: string[] | undefined,
@@ -45,6 +797,82 @@ function provenanceForMedia(
 function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   return API_BASE ? `${API_BASE}${p}` : p;
+}
+
+/** Download filename for workspace PNG (host + timestamp). */
+function screenshotFilename(rootUrl: string, pageUrl: string | undefined): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
+  try {
+    const raw = (pageUrl || rootUrl).trim() || "https://local";
+    const u = new URL(raw);
+    const host = u.hostname.replace(/[^a-z0-9.-]+/gi, "_").slice(0, 80) || "page";
+    return `spider-scraper-${host}-${stamp}.png`;
+  } catch {
+    return `spider-scraper-${stamp}.png`;
+  }
+}
+
+/** POST JSON → file download (CSV/JSON). Parses errors from JSON error responses. */
+async function postBlobDownload(
+  path: string,
+  body: unknown,
+  fallbackFilename: string,
+): Promise<void> {
+  try {
+    const res = await axios.post<Blob>(apiUrl(path), body, {
+      responseType: "blob",
+      timeout: 120_000,
+      headers: { "Content-Type": "application/json" },
+    });
+    const blob = res.data;
+    const cd = res.headers["content-disposition"];
+    let filename = fallbackFilename;
+    if (typeof cd === "string") {
+      const utf8 = /filename\*=UTF-8''([^;\s]+)/i.exec(cd);
+      const quoted = /filename="([^"]+)"/i.exec(cd);
+      const plain = /filename=([^;\s]+)/i.exec(cd);
+      if (utf8?.[1]) {
+        try {
+          filename = decodeURIComponent(utf8[1].trim());
+        } catch {
+          filename = utf8[1].trim();
+        }
+      } else if (quoted?.[1]) {
+        filename = quoted[1].trim();
+      } else if (plain?.[1]) {
+        filename = plain[1].replace(/['"]/g, "").trim();
+      }
+    }
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(href);
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
+      const text = await e.response.data.text();
+      let message = text || "Export failed";
+      try {
+        const j = JSON.parse(text) as { error?: string };
+        if (j.error) message = j.error;
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(message);
+    }
+    if (
+      axios.isAxiosError(e) &&
+      !e.response &&
+      (e.code === "ERR_NETWORK" || (e.message || "").toLowerCase().includes("network"))
+    ) {
+      throw new Error(
+        "Cannot reach the backend (network error). Start Flask on port 5000 and use " +
+          "npm run dev so /api is proxied, or set VITE_API_BASE to your API URL.",
+      );
+    }
+    throw e;
+  }
 }
 
 async function downloadMediaZip(
@@ -163,38 +991,263 @@ type ScrapeResult = {
   links?: string[];
   images?: string[];
   videos?: string[];
+  http_status?: number;
+  status_label?: string;
+  meta_description?: string | null;
+  canonical_url?: string | null;
+  og_title?: string | null;
+  og_description?: string | null;
+  og_image?: string | null;
+  twitter_title?: string | null;
+  twitter_description?: string | null;
+  h1?: string[];
+  h2?: string[];
+  /** Full response body HTML (same as crawled `raw_html`). */
+  raw_html?: string;
+  raw_css?: string;
+  raw_js?: string;
   error?: string;
 };
 
-type CrawlApiResponse = {
-  start_url?: string;
-  total_pages?: number;
-  pages?: ScrapeResult[];
-  errors?: { url: string; error: string }[];
-  error?: string;
+/** One server request runs the full depth-limited crawl (same host, deduped URLs). */
+const CRAWL_API_TIMEOUT_MS = 15 * 60 * 1000;
+
+type CrawlDepth = 1 | 2 | 3;
+
+type CrawlGraphResult = {
+  pages: ScrapedPage[];
+  edges: SitemapEdge[];
 };
 
-function crawlResponseToPages(data: CrawlApiResponse): ScrapedPage[] {
-  const list = data.pages ?? [];
-  const baseId = Date.now();
-  return list.map((p, index) => {
-    const text = [...(p.preview ?? p.paragraphs ?? [])];
-    const pageUrl = (p.url as string) || "";
-    return {
-      id: baseId + index,
-      title: (p.title as string) ?? pageUrl,
-      category: index === 0 ? "home" : "crawled-page",
-      url: pageUrl,
-      paragraph_count: p.paragraph_count ?? text.length,
-      preview: text,
-      html: text.join("\n\n"),
-      links: p.links ?? [],
-      images: p.images ?? [],
-      videos: p.videos ?? [],
-      imageSources: provenanceForMedia(p.images, pageUrl),
-      videoSources: provenanceForMedia(p.videos, pageUrl),
-    };
-  });
+/** Live crawl progress (NDJSON stream from POST /api/crawl/stream). */
+type CrawlProgressState = {
+  current: number;
+  total: number;
+  url: string;
+};
+
+/** Mirrors backend `crawl_stats` from depth-limited crawl (sitemap / diagnostics). */
+type CrawlStatsPayload = {
+  counts?: {
+    pages_recorded?: number;
+    visited_unique?: number;
+    enqueued_unique?: number;
+    pending_in_queue?: number;
+    skipped_duplicate?: number;
+    depth_skipped_links?: number;
+    external_urls_unique?: number;
+  };
+  visited_urls?: string[];
+  queued_urls?: string[];
+  pending?: Array<{ url: string; normalized: string; depth: number }>;
+  skipped_duplicates_sample?: Array<{
+    normalized: string;
+    reason: string;
+    from_page: string;
+  }>;
+  external_urls?: string[];
+  external_urls_truncated?: boolean;
+  broken_links?: unknown[];
+};
+
+type ServerCrawlResponse = {
+  pages?: Array<Record<string, unknown>>;
+  edges?: SitemapEdge[];
+  errors?: Array<{ url: string; error: string }>;
+  error?: string;
+  crawl_depth?: number;
+  crawl_stats?: CrawlStatsPayload;
+};
+
+function backendPageToScrapedPage(raw: Record<string, unknown>, index: number): ScrapedPage {
+  const prev = (raw.preview as string[] | undefined) ?? (raw.paragraphs as string[] | undefined);
+  const text = Array.isArray(prev) ? [...prev] : [];
+  const pageUrl = String(raw.url ?? "");
+  const nodeId = String(raw.nodeId ?? newNodeId());
+  const category = String(
+    raw.category ?? (index === 0 ? "home" : "crawled-page"),
+  );
+  const images = (raw.images as string[] | undefined) ?? [];
+  const videos = (raw.videos as string[] | undefined) ?? [];
+  const hs = raw.http_status;
+  const http_status =
+    typeof hs === "number" && !Number.isNaN(hs) ? hs : undefined;
+  const status_label = parseStatusLabel(raw.status_label);
+  const rawHtml = raw.raw_html;
+  const rawCss = raw.raw_css;
+  const rawJs = raw.raw_js;
+  return {
+    nodeId,
+    title: String(raw.title ?? pageUrl),
+    category,
+    url: pageUrl,
+    paragraph_count: Number(raw.paragraph_count ?? text.length),
+    preview: text,
+    http_status,
+    status_label,
+    meta_description: parseOptionalMetaString(raw.meta_description),
+    canonical_url: parseOptionalMetaString(raw.canonical_url),
+    og_title: parseOptionalMetaString(raw.og_title),
+    og_description: parseOptionalMetaString(raw.og_description),
+    og_image: parseOptionalMetaString(raw.og_image),
+    twitter_title: parseOptionalMetaString(raw.twitter_title),
+    twitter_description: parseOptionalMetaString(raw.twitter_description),
+    h1: parseHeadingList(raw.h1),
+    h2: parseHeadingList(raw.h2),
+    html: text.join("\n\n"),
+    raw_html: typeof rawHtml === "string" ? rawHtml : undefined,
+    raw_css: typeof rawCss === "string" ? rawCss : undefined,
+    raw_js: typeof rawJs === "string" ? rawJs : undefined,
+    links: (raw.links as string[] | undefined) ?? [],
+    images,
+    videos,
+    imageSources: provenanceForMedia(images, pageUrl),
+    videoSources: provenanceForMedia(videos, pageUrl),
+  };
+}
+
+function mapServerCrawlResponse(
+  data: ServerCrawlResponse,
+  crawlDepth: CrawlDepth,
+  options: { onLog: (line: string) => void },
+): CrawlGraphResult {
+  if (data.error) {
+    options.onLog(`Crawl failed: ${data.error}`);
+    return { pages: [], edges: [] };
+  }
+  const rawPages = data.pages ?? [];
+  const outPages = rawPages.map((p, i) =>
+    backendPageToScrapedPage(p as Record<string, unknown>, i),
+  );
+  const outEdges = Array.isArray(data.edges) ? data.edges : [];
+  for (const e of data.errors ?? []) {
+    options.onLog(`FAIL ${e.url}: ${e.error}`);
+  }
+  options.onLog(
+    `Crawl complete: ${outPages.length} pages, ${outEdges.length} edges (depth ${crawlDepth}).`,
+  );
+  return { pages: outPages, edges: outEdges };
+}
+
+async function serverCrawl(
+  startUrl: string,
+  crawlDepth: CrawlDepth,
+  options: {
+    onLog: (line: string) => void;
+    onProgress?: (p: CrawlProgressState) => void;
+  },
+): Promise<CrawlGraphResult> {
+  const legacyJsonCrawl = async (): Promise<CrawlGraphResult> => {
+    try {
+      const response = await axios.post<ServerCrawlResponse>(
+        apiUrl("/api/crawl"),
+        { url: startUrl, crawl_depth: crawlDepth },
+        {
+          timeout: CRAWL_API_TIMEOUT_MS,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      return mapServerCrawlResponse(response.data, crawlDepth, options);
+    } catch (e: unknown) {
+      if (axios.isAxiosError(e) && e.response?.data && typeof e.response.data === "object") {
+        const body = e.response.data as { error?: string };
+        if (body.error) {
+          options.onLog(`Crawl failed: ${body.error}`);
+          return { pages: [], edges: [] };
+        }
+      }
+      const msg = axios.isAxiosError(e) ? e.message : String(e);
+      options.onLog(`Crawl request failed: ${msg}`);
+      return { pages: [], edges: [] };
+    }
+  };
+
+  try {
+    const ac = new AbortController();
+    const timer = window.setTimeout(() => ac.abort(), CRAWL_API_TIMEOUT_MS);
+    const res = await fetch(apiUrl("/api/crawl/stream"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: startUrl,
+        crawl_depth: crawlDepth,
+      }),
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.status === 404) {
+      options.onLog("Stream API not found — using JSON crawl.");
+      return legacyJsonCrawl();
+    }
+    if (!res.ok) {
+      const snippet = await res.text().catch(() => "");
+      options.onLog(`Crawl stream HTTP ${res.status}: ${snippet.slice(0, 160)}`);
+      return legacyJsonCrawl();
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      options.onLog("No response body — using JSON crawl.");
+      return legacyJsonCrawl();
+    }
+
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      for (;;) {
+        const nl = buf.indexOf("\n");
+        if (nl < 0) break;
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let obj: unknown;
+        try {
+          obj = JSON.parse(line) as unknown;
+        } catch {
+          continue;
+        }
+        if (typeof obj !== "object" || obj === null || !("type" in obj)) continue;
+        const o = obj as { type: string };
+        if (o.type === "progress") {
+          const p = obj as unknown as {
+            current: number;
+            total: number;
+            url: string;
+          };
+          options.onProgress?.({
+            current: p.current,
+            total: p.total,
+            url: p.url,
+          });
+          options.onLog(`Crawl ${p.current}/${p.total}: ${p.url}`);
+        } else if (o.type === "done") {
+          const data = (obj as unknown as { data: ServerCrawlResponse }).data;
+          return mapServerCrawlResponse(data, crawlDepth, options);
+        } else if (o.type === "error") {
+          const msg = (obj as { message?: string }).message ?? "Unknown error";
+          options.onLog(`Crawl failed: ${msg}`);
+          return { pages: [], edges: [] };
+        }
+      }
+    }
+    options.onLog("Crawl stream closed without a result — using JSON crawl.");
+    return legacyJsonCrawl();
+  } catch (e: unknown) {
+    const aborted =
+      (e instanceof Error || e instanceof DOMException) && (e as Error).name === "AbortError";
+    if (aborted) {
+      options.onLog("Crawl timed out.");
+      return { pages: [], edges: [] };
+    }
+    options.onLog(
+      `Crawl stream error: ${e instanceof Error ? e.message : String(e)} — trying JSON crawl.`,
+    );
+    return legacyJsonCrawl();
+  }
 }
 
 function ImagePreviewCell({ url }: { url: string }) {
@@ -473,19 +1526,43 @@ export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
+  const [savingSitemap, setSavingSitemap] = useState(false);
+  const [loadingSitemap, setLoadingSitemap] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingJson, setExportingJson] = useState(false);
+  const [edges, setEdges] = useState<SitemapEdge[]>([]);
+  /** 1 = root only, 2 = root + direct links, 3 = one more hop (matches `/api/crawl`). */
+  const [crawlDepth, setCrawlDepth] = useState<CrawlDepth>(2);
+  /** Filled during NDJSON crawl stream (current/total + URL being fetched). */
+  const [crawlProgress, setCrawlProgress] = useState<CrawlProgressState | null>(null);
+
+  /** Pages for the graph (hide aggregate rows so the map matches crawled URLs). */
+  const graphPages = useMemo(
+    () =>
+      pages.filter(
+        (p) => p.category !== "aggregate-images" && p.category !== "aggregate-videos",
+      ),
+    [pages],
+  );
+
+  const graphEdgesFiltered = useMemo(() => {
+    const idSet = new Set(graphPages.map((p) => p.nodeId));
+    return edges.filter((e) => idSet.has(e.source) && idSet.has(e.target));
+  }, [graphPages, edges]);
 
   const tabs = [
     "Text View",
     "XML View",
-    "HTML Preview",
-    "CSS Preview",
-    "JavaScript Preview",
+    "HTML",
+    "CSS",
+    "JavaScript",
     "Metadata",
     "Tables",
     "JSON",
     "Regex Search",
     "Images",
     "Videos",
+    "Sitemap Graph",
   ];
 
   const handleScrapeSite = async () => {
@@ -493,47 +1570,35 @@ export default function Home() {
     if (!start) return;
 
     setLoading(true);
+    setCrawlProgress(null);
     setLogs((prev) => [
       ...prev,
-      `Full-site crawl from ${start} (all same-domain pages linked from HTML; no caps)…`,
+      `Crawl from ${start} (depth ${crawlDepth}, same domain, server-side BFS, all reachable pages)…`,
     ]);
 
     try {
-      const response = await axios.post(
-        apiUrl("/api/crawl"),
-        { url: start },
-        { timeout: CRAWL_TIMEOUT_MS },
-      );
+      const crawlResult = await serverCrawl(start, crawlDepth, {
+        onLog: (line) => setLogs((prev) => [...prev, line]),
+        onProgress: (p) => setCrawlProgress(p),
+      });
 
-      const data = response.data as CrawlApiResponse;
-      if (data.error) {
-        setLogs((prev) => [...prev, `ERROR: ${data.error}`]);
-        return;
-      }
-
-      const newPages = crawlResponseToPages(data);
-      if (newPages.length === 0) {
-        setLogs((prev) => [...prev, "Crawl returned no pages."]);
+      if (crawlResult.pages.length === 0) {
+        setLogs((prev) => [...prev, "Crawl returned no pages (check failures above)."]);
         setPages([]);
+        setEdges([]);
         setSelectedPage(null);
         return;
       }
 
-      setPages(newPages);
-      setSelectedPage(newPages[0]);
-
-      for (const err of data.errors ?? []) {
-        setLogs((prev) => [...prev, `FAIL ${err.url}: ${err.error}`]);
-      }
-      setLogs((prev) => [
-        ...prev,
-        `Crawl finished: ${data.total_pages ?? newPages.length} pages scraped.`,
-      ]);
+      setPages(crawlResult.pages);
+      setEdges(crawlResult.edges);
+      setSelectedPage(crawlResult.pages[0]);
     } catch (error) {
       console.error(error);
       setLogs((prev) => [...prev, `ERROR crawl ${start}`]);
     } finally {
       setLoading(false);
+      setCrawlProgress(null);
     }
   };
 
@@ -542,6 +1607,7 @@ export default function Home() {
     if (!root) return;
 
     setLoading(true);
+    setCrawlProgress(null);
     setLogs((prev) => [
       ...prev,
       `${kind === "images" ? "Scrape all images" : "Scrape all videos"} (every crawled page) — ${root}`,
@@ -551,25 +1617,22 @@ export default function Home() {
       let contentPages = pages.filter(
         (p) => p.category !== "aggregate-images" && p.category !== "aggregate-videos",
       );
+      let graphEdges = edges;
 
       if (contentPages.length === 0) {
         setLogs((prev) => [
           ...prev,
-          "No pages in the table — running full-site crawl first (may take a long time)…",
+          `No pages in the table — running crawl first (depth ${crawlDepth})…`,
         ]);
-        const response = await axios.post(
-          apiUrl("/api/crawl"),
-          { url: root },
-          { timeout: CRAWL_TIMEOUT_MS },
-        );
-        const data = response.data as CrawlApiResponse;
-        if (data.error) {
-          setLogs((prev) => [...prev, `ERROR: ${data.error}`]);
+        const crawlResult = await serverCrawl(root, crawlDepth, {
+          onLog: (line) => setLogs((prev) => [...prev, line]),
+          onProgress: (p) => setCrawlProgress(p),
+        });
+        contentPages = crawlResult.pages;
+        graphEdges = crawlResult.edges;
+        if (contentPages.length === 0) {
+          setLogs((prev) => [...prev, "Crawl returned no pages; cannot build media list."]);
           return;
-        }
-        contentPages = crawlResponseToPages(data);
-        for (const err of data.errors ?? []) {
-          setLogs((prev) => [...prev, `FAIL ${err.url}: ${err.error}`]);
         }
         setLogs((prev) => [...prev, `Crawl done: ${contentPages.length} pages.`]);
       }
@@ -591,20 +1654,34 @@ export default function Home() {
         }
       }
 
-      const baseId = Date.now();
       const mergedImgArr = Array.from(mergedImages);
       const mergedVidArr = Array.from(mergedVideos);
 
+      const aggregateNodeId = newNodeId();
       const aggregatePage: ScrapedPage =
         kind === "images"
           ? {
-              id: baseId,
+              nodeId: aggregateNodeId,
               title: `All images (${mergedImgArr.length})`,
               category: "aggregate-images",
               url: root,
               paragraph_count: 0,
               preview: [],
+              http_status: 200,
+              status_label: "ok",
+              meta_description: undefined,
+              canonical_url: undefined,
+              og_title: undefined,
+              og_description: undefined,
+              og_image: undefined,
+              twitter_title: undefined,
+              twitter_description: undefined,
+              h1: [],
+              h2: [],
               html: "",
+              raw_html: undefined,
+              raw_css: undefined,
+              raw_js: undefined,
               links: [],
               images: mergedImgArr,
               videos: [],
@@ -612,13 +1689,25 @@ export default function Home() {
               videoSources: [],
             }
           : {
-              id: baseId,
+              nodeId: aggregateNodeId,
               title: `All videos (${mergedVidArr.length})`,
               category: "aggregate-videos",
               url: root,
               paragraph_count: 0,
               preview: [],
+              http_status: 200,
+              status_label: "ok",
+              meta_description: undefined,
+              canonical_url: undefined,
+              og_title: undefined,
+              og_description: undefined,
+              og_image: undefined,
+              twitter_title: undefined,
+              twitter_description: undefined,
+              h1: [],
+              h2: [],
               html: "",
+              raw_html: undefined,
               links: [],
               images: [],
               videos: mergedVidArr,
@@ -626,6 +1715,15 @@ export default function Home() {
               videoSources: videoProv,
             };
 
+      const rootPage =
+        contentPages.find((p) => p.category === "home") ?? contentPages[0];
+      const nextEdges = [...graphEdges];
+      const edgeSeen = new Set(nextEdges.map((e) => edgeKey(e.source, e.target)));
+      if (rootPage) {
+        pushEdge(nextEdges, edgeSeen, rootPage.nodeId, aggregateNodeId);
+      }
+
+      setEdges(nextEdges);
       setPages([aggregatePage, ...contentPages]);
       setSelectedPage(aggregatePage);
       setActiveTab(kind === "images" ? "Images" : "Videos");
@@ -634,7 +1732,10 @@ export default function Home() {
 
       const provEntries = kind === "images" ? imageProv : videoProv;
       if (provEntries.length > 0) {
-        setLogs((prev) => [...prev, "Building ZIP (media files + manifest)..."]);
+        setLogs((prev) => [
+          ...prev,
+          "Building ZIP: downloading each file on the server (embeds skip; large videos can take many minutes)…",
+        ]);
         setZipBusy(true);
         try {
           await downloadMediaZip(kind, provEntries);
@@ -654,6 +1755,170 @@ export default function Home() {
       setLogs((prev) => [...prev, `ERROR ${kind} crawl`]);
     } finally {
       setLoading(false);
+      setCrawlProgress(null);
+    }
+  };
+
+  const handleSaveSitemap = async () => {
+    const payload: SitemapSavePayload = {
+      rootUrl,
+      pages,
+      edges,
+      selectedPage,
+      logs,
+      savedAt: new Date().toISOString(),
+    };
+
+    setSavingSitemap(true);
+    setLogs((prev) => [...prev, "Saving sitemap…"]);
+    try {
+      const res = await axios.post<SitemapSaveResponse>(
+        apiUrl("/api/sitemap/save"),
+        payload,
+        {
+          headers: { "Content-Type": "application/json" },
+          timeout: 60_000,
+        },
+      );
+      const data = res.data;
+      if (data.ok) {
+        setLogs((prev) => [
+          ...prev,
+          `Sitemap saved: ${data.filename}`,
+          `Path (server): ${data.path}`,
+        ]);
+      }
+    } catch (e: unknown) {
+      let msg = "Save failed";
+      if (axios.isAxiosError(e) && e.response?.data && typeof e.response.data === "object") {
+        const body = e.response.data as { error?: string };
+        if (body.error) msg = body.error;
+      } else if (e instanceof Error) {
+        msg = e.message;
+      }
+      console.error(e);
+      setLogs((prev) => [...prev, `Sitemap save error: ${msg}`]);
+    } finally {
+      setSavingSitemap(false);
+    }
+  };
+
+  const handleLoadSitemap = async () => {
+    setLoadingSitemap(true);
+    try {
+      const listRes = await axios.get<SitemapListResponse>(apiUrl("/api/sitemap/list"), {
+        timeout: 30_000,
+      });
+      const files = listRes.data.files ?? [];
+      if (files.length === 0) {
+        setLogs((prev) => [...prev, "No saved sitemaps yet — use Save Sitemap first."]);
+        return;
+      }
+
+      const lines = files.map((f, i) => `${i + 1}. ${f.filename}`).join("\n");
+      const choice = window.prompt(
+        `Saved sitemaps (newest first).\nEnter a number (1–${files.length}) or the exact filename:\n\n${lines}`,
+      );
+      if (choice === null) {
+        setLogs((prev) => [...prev, "Load sitemap cancelled."]);
+        return;
+      }
+
+      const trimmed = choice.trim();
+      let filename: string | undefined;
+      const n = parseInt(trimmed, 10);
+      if (!Number.isNaN(n) && n >= 1 && n <= files.length) {
+        filename = files[n - 1].filename;
+      } else {
+        filename = files.find((f) => f.filename === trimmed)?.filename;
+      }
+      if (!filename) {
+        setLogs((prev) => [...prev, `No file matched "${trimmed}".`]);
+        return;
+      }
+
+      const loadRes = await axios.get<SitemapSnapshot>(apiUrl("/api/sitemap/load"), {
+        params: { filename },
+        timeout: 120_000,
+      });
+      const data = loadRes.data;
+      if (typeof (data as { error?: string }).error === "string") {
+        setLogs((prev) => [...prev, `Load failed: ${(data as { error: string }).error}`]);
+        return;
+      }
+
+      const raw = Array.isArray(data.pages) ? data.pages : [];
+      const nextPages = raw.map((row) =>
+        normalizeLoadedPage(row as ScrapedPage & { id?: number }),
+      );
+      setRootUrl(typeof data.rootUrl === "string" ? data.rootUrl : "");
+      setPages(nextPages);
+      setEdges(Array.isArray(data.edges) ? data.edges : []);
+      setSelectedPage(restoreSelectedPage(nextPages, data.selectedPage ?? null));
+      const priorLogs = Array.isArray(data.logs) ? data.logs : [];
+      setLogs([...priorLogs, `Loaded sitemap: ${filename}`]);
+    } catch (e: unknown) {
+      let msg = "Load failed";
+      if (axios.isAxiosError(e) && e.response?.data && typeof e.response.data === "object") {
+        const body = e.response.data as { error?: string };
+        if (body.error) msg = body.error;
+      } else if (e instanceof Error) {
+        msg = e.message;
+      }
+      console.error(e);
+      setLogs((prev) => [...prev, `Sitemap load error: ${msg}`]);
+    } finally {
+      setLoadingSitemap(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    if (pages.length === 0) {
+      setLogs((prev) => [...prev, "Nothing to export — crawl or load a sitemap first."]);
+      return;
+    }
+    setExportingCsv(true);
+    setLogs((prev) => [...prev, "Exporting pages as CSV…"]);
+    try {
+      await postBlobDownload("/api/export/pages-csv", { pages }, "spider-scraper-pages.csv");
+      setLogs((prev) => [...prev, "CSV export finished (download started)."]);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      setLogs((prev) => [...prev, `CSV export failed: ${msg}`]);
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
+  const handleExportJson = async () => {
+    if (pages.length === 0) {
+      setLogs((prev) => [...prev, "Nothing to export — crawl or load a sitemap first."]);
+      return;
+    }
+    setExportingJson(true);
+    setLogs((prev) => [...prev, "Exporting full sitemap as JSON…"]);
+    try {
+      const payload = {
+        rootUrl,
+        pages,
+        edges,
+        selectedPage,
+        logs,
+        savedAt: new Date().toISOString(),
+      };
+      await postBlobDownload(
+        "/api/export/sitemap-json",
+        payload,
+        "spider-scraper-sitemap.json",
+      );
+      setLogs((prev) => [...prev, "JSON export finished (download started)."]);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      setLogs((prev) => [...prev, `JSON export failed: ${msg}`]);
+    } finally {
+      setExportingJson(false);
     }
   };
 
@@ -662,7 +1927,10 @@ export default function Home() {
       mode === "images" ? selectedPage?.imageSources : selectedPage?.videoSources;
     if (!entries?.length) return;
     setZipBusy(true);
-    setLogs((prev) => [...prev, `ZIP export (${mode})...`]);
+    setLogs((prev) => [
+      ...prev,
+      `ZIP export (${mode}): server downloads each file — may take a while for large video sets…`,
+    ]);
     try {
       await downloadMediaZip(mode, entries);
       setLogs((prev) => [...prev, `ZIP export (${mode}) done`]);
@@ -695,9 +1963,11 @@ export default function Home() {
     setLogs((prev) => [...prev, `GET ${page.url}`]);
 
     try {
-      const response = await axios.post(apiUrl("/api/scrape"), {
-        url: page.url,
-      });
+      const response = await axios.post(
+        apiUrl("/api/scrape"),
+        { url: page.url },
+        { timeout: PER_PAGE_SCRAPE_TIMEOUT_MS },
+      );
 
       const result = response.data as ScrapeResult;
       const text = [...(result.preview ?? result.paragraphs ?? [])];
@@ -713,9 +1983,29 @@ export default function Home() {
         videos: result.videos || [],
         imageSources: provenanceForMedia(result.images, page.url),
         videoSources: provenanceForMedia(result.videos, page.url),
+        http_status:
+          typeof result.http_status === "number" ? result.http_status : page.http_status,
+        status_label: parseStatusLabel(result.status_label) ?? page.status_label,
+        meta_description:
+          parseOptionalMetaString(result.meta_description) ?? page.meta_description,
+        canonical_url: parseOptionalMetaString(result.canonical_url) ?? page.canonical_url,
+        og_title: parseOptionalMetaString(result.og_title) ?? page.og_title,
+        og_description: parseOptionalMetaString(result.og_description) ?? page.og_description,
+        og_image: parseOptionalMetaString(result.og_image) ?? page.og_image,
+        twitter_title: parseOptionalMetaString(result.twitter_title) ?? page.twitter_title,
+        twitter_description:
+          parseOptionalMetaString(result.twitter_description) ?? page.twitter_description,
+        h1: parseHeadingList(result.h1),
+        h2: parseHeadingList(result.h2),
+        raw_html:
+          typeof result.raw_html === "string" ? result.raw_html : page.raw_html,
+        raw_css: typeof result.raw_css === "string" ? result.raw_css : page.raw_css,
+        raw_js: typeof result.raw_js === "string" ? result.raw_js : page.raw_js,
       };
 
-      const updatedPages = pages.map((p) => (p.id === page.id ? updatedPage : p));
+      const updatedPages = pages.map((p) =>
+        p.nodeId === page.nodeId ? updatedPage : p,
+      );
 
       setPages(updatedPages);
       setSelectedPage(updatedPage);
@@ -727,6 +2017,42 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  const detailPanelFillFlex =
+    activeTab === "Sitemap Graph" ||
+    activeTab === "HTML" ||
+    activeTab === "CSS" ||
+    activeTab === "JavaScript" ||
+    activeTab === "Regex Search";
+
+  const scraperMainRef = useRef<HTMLDivElement>(null);
+  const screenshotLockRef = useRef(false);
+  const [screenshotBusy, setScreenshotBusy] = useState(false);
+
+  const handleScreenshotWorkspace = useCallback(async () => {
+    const el = scraperMainRef.current;
+    if (!el || screenshotLockRef.current) return;
+    screenshotLockRef.current = true;
+    setScreenshotBusy(true);
+    try {
+      await new Promise((r) => requestAnimationFrame(r));
+      const dataUrl = await toPng(el, {
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+        cacheBust: true,
+      });
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = screenshotFilename(rootUrl, selectedPage?.url);
+      a.rel = "noopener";
+      a.click();
+    } catch (e) {
+      console.error("Screenshot failed:", e);
+    } finally {
+      screenshotLockRef.current = false;
+      setScreenshotBusy(false);
+    }
+  }, [rootUrl, selectedPage?.url]);
 
   return (
     <div className="scraper-app">
@@ -743,6 +2069,33 @@ export default function Home() {
           onChange={(e) => setRootUrl(e.target.value)}
         />
 
+        <label
+          htmlFor="crawl-depth"
+          style={{ fontSize: "13px", color: "#374151", whiteSpace: "nowrap" }}
+        >
+          Depth:
+        </label>
+        <select
+          id="crawl-depth"
+          value={crawlDepth}
+          onChange={(e) => setCrawlDepth(Number(e.target.value) as CrawlDepth)}
+          disabled={loading}
+          style={{
+            padding: "8px 10px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            fontSize: "13px",
+            background: "#ffffff",
+            cursor: loading ? "not-allowed" : "pointer",
+            maxWidth: "200px",
+          }}
+          title="1 = start URL only. 2 = start + pages linked from it. 3 = one more level of internal links."
+        >
+          <option value={1}>1 — root page only</option>
+          <option value={2}>2 — root + linked pages</option>
+          <option value={3}>3 — root + 2 levels of links</option>
+        </select>
+
         <button
           onClick={handleScrapeSite}
           disabled={loading}
@@ -758,7 +2111,7 @@ export default function Home() {
             whiteSpace: "nowrap",
           }}
         >
-          {loading ? "Crawling…" : "Crawl entire site"}
+          {loading ? "Crawling…" : "Crawl"}
         </button>
 
         <button
@@ -799,42 +2152,131 @@ export default function Home() {
           Scrape all videos
         </button>
 
-        {["Save Sitemap", "Load Sitemap", "Settings"].map((btn) => (
-          <button
-            key={btn}
-            style={{
-              padding: "10px 14px",
-              borderRadius: "8px",
-              border: "1px solid #cbd5e1",
-              background: "#ffffff",
-              color: "#111827",
-              cursor: "pointer",
-              fontSize: "13px",
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {btn}
-          </button>
-        ))}
+        <button
+          type="button"
+          onClick={() => void handleSaveSitemap()}
+          disabled={loading || savingSitemap}
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: savingSitemap ? "#f1f5f9" : "#ffffff",
+            color: "#111827",
+            cursor: loading || savingSitemap || loadingSitemap ? "not-allowed" : "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {savingSitemap ? "Saving…" : "Save Sitemap"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void handleLoadSitemap()}
+          disabled={loading || savingSitemap || loadingSitemap}
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: loadingSitemap ? "#f1f5f9" : "#ffffff",
+            color: "#111827",
+            cursor: loading || savingSitemap || loadingSitemap ? "not-allowed" : "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {loadingSitemap ? "Loading…" : "Load Sitemap"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void handleExportCsv()}
+          disabled={
+            loading ||
+            savingSitemap ||
+            loadingSitemap ||
+            exportingCsv ||
+            exportingJson ||
+            pages.length === 0
+          }
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #0f766e",
+            background: exportingCsv ? "#ccfbf1" : "#f0fdfa",
+            color: "#115e59",
+            cursor:
+              loading ||
+              savingSitemap ||
+              loadingSitemap ||
+              exportingCsv ||
+              exportingJson ||
+              pages.length === 0
+                ? "not-allowed"
+                : "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {exportingCsv ? "Exporting…" : "Export CSV"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void handleExportJson()}
+          disabled={
+            loading ||
+            savingSitemap ||
+            loadingSitemap ||
+            exportingCsv ||
+            exportingJson ||
+            pages.length === 0
+          }
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #0369a1",
+            background: exportingJson ? "#e0f2fe" : "#f0f9ff",
+            color: "#0c4a6e",
+            cursor:
+              loading ||
+              savingSitemap ||
+              loadingSitemap ||
+              exportingCsv ||
+              exportingJson ||
+              pages.length === 0
+                ? "not-allowed"
+                : "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {exportingJson ? "Exporting…" : "Export JSON"}
+        </button>
+
       </div>
 
-      <div className="scraper-main">
+      <div className="scraper-main" ref={scraperMainRef}>
         <div className="scraper-left">
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "48% 16% 36%",
+              gridTemplateColumns: "34% 12% 14% 38%",
               padding: "10px 12px",
               background: "#f1f5f9",
               borderBottom: "1px solid #cbd5e1",
               fontWeight: 700,
               fontSize: "13px",
-              minWidth: "900px",
+              minWidth: "980px",
             }}
           >
             <div>Title</div>
             <div>Category</div>
+            <div>HTTP</div>
             <div>URL</div>
           </div>
 
@@ -851,21 +2293,22 @@ export default function Home() {
               </div>
             ) : (
               pages.map((page) => {
-                const selected = selectedPage?.id === page.id;
+                const selected = selectedPage?.nodeId === page.nodeId;
                 return (
                   <div
-                    key={page.id}
+                    key={page.nodeId}
                     onClick={() => scrapeLinkedPage(page)}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "48% 16% 36%",
+                      gridTemplateColumns: "34% 12% 14% 38%",
                       padding: "10px 12px",
                       borderBottom: "1px solid #e5e7eb",
                       cursor: "pointer",
                       background: selected ? "#dbeafe" : "#ffffff",
                       color: selected ? "#1d4ed8" : "#111827",
                       fontSize: "13px",
-                      minWidth: "900px",
+                      minWidth: "980px",
+                      alignItems: "center",
                     }}
                   >
                     <div
@@ -887,6 +2330,9 @@ export default function Home() {
                       }}
                     >
                       {page.category}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <StatusBadge label={page.status_label} code={page.http_status} />
                     </div>
                     <div
                       title={page.url}
@@ -926,6 +2372,7 @@ export default function Home() {
               borderBottom: "1px solid #cbd5e1",
               background: "#f8fafc",
               flexWrap: "wrap",
+              alignItems: "center",
             }}
           >
             {tabs.map((tab) => (
@@ -947,19 +2394,68 @@ export default function Home() {
                 {tab}
               </button>
             ))}
+            <button
+              type="button"
+              title="Save a PNG screenshot of the workspace (page list + detail panel)"
+              aria-label="Save workspace screenshot as PNG"
+              disabled={screenshotBusy}
+              onClick={() => void handleScreenshotWorkspace()}
+              style={{
+                marginLeft: "4px",
+                padding: "6px 8px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: screenshotBusy ? "#e2e8f0" : "#ffffff",
+                color: "#334155",
+                cursor: screenshotBusy ? "wait" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            </button>
           </div>
 
           <div
             style={{
               flex: 1,
-              padding: "16px",
-              overflowY: "auto",
+              padding: detailPanelFillFlex ? 0 : "16px",
+              overflowY: detailPanelFillFlex ? "hidden" : "auto",
+              overflowX: detailPanelFillFlex ? "hidden" : undefined,
+              minHeight: 0,
+              display: detailPanelFillFlex ? "flex" : "block",
+              flexDirection: detailPanelFillFlex ? "column" : undefined,
               fontSize: "14px",
               lineHeight: 1.6,
               background: "#ffffff",
             }}
           >
-            {!selectedPage ? (
+            {activeTab === "Sitemap Graph" ? (
+              <SitemapGraphView
+                pages={graphPages}
+                edges={graphEdgesFiltered}
+                selectedPageNodeId={selectedPage?.nodeId ?? null}
+                onSelectPageByNodeId={(nodeId) => {
+                  const p = pages.find((x) => x.nodeId === nodeId);
+                  if (p) setSelectedPage(p);
+                }}
+              />
+            ) : !selectedPage ? (
               <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
             ) : activeTab === "Text View" ? (
               <pre
@@ -972,11 +2468,32 @@ export default function Home() {
                 {`Title: ${selectedPage.title}
 Category: ${selectedPage.category}
 URL: ${selectedPage.url}
+HTTP: ${selectedPage.http_status != null && selectedPage.http_status > 0 ? selectedPage.http_status : "—"} (${statusLabelDisplay(selectedPage.status_label)})
 Paragraph Count: ${selectedPage.paragraph_count}
 
 Preview:
 ${selectedPage.preview.join("\n\n")}`}
               </pre>
+            ) : activeTab === "Metadata" ? (
+              <PageMetadataPanel page={selectedPage} />
+            ) : activeTab === "HTML" ? (
+              <CodePreviewPanel
+                title="HTML source"
+                content={selectedPage.raw_html}
+                emptyMessage="No HTML source for this page. Run a crawl or open a page after scrape."
+              />
+            ) : activeTab === "CSS" ? (
+              <CodePreviewPanel
+                title="CSS source"
+                content={selectedPage.raw_css}
+                emptyMessage="No inline style blocks or linked stylesheets found. External stylesheet URLs are listed as comments only (files are not fetched)."
+              />
+            ) : activeTab === "JavaScript" ? (
+              <CodePreviewPanel
+                title="JavaScript source"
+                content={selectedPage.raw_js}
+                emptyMessage="No inline scripts or external script tags found. JSON-LD and other non-JS script types are omitted."
+              />
             ) : activeTab === "Videos" ? (
               <div>
                 <div
@@ -1083,6 +2600,8 @@ ${selectedPage.preview.join("\n\n")}`}
               >
                 {JSON.stringify(selectedPage, null, 2)}
               </pre>
+            ) : activeTab === "Regex Search" ? (
+              <RegexSearchPanel page={selectedPage} />
             ) : (
               <div style={{ color: "#6b7280" }}>This tab is not wired up yet.</div>
             )}
@@ -1112,9 +2631,100 @@ ${selectedPage.preview.join("\n\n")}`}
         </div>
       </div>
 
-      <div className="scraper-footer">
-        <div>Pages scraped: {pages.length}</div>
-        <div>{loading ? "Working..." : "Done"}</div>
+      <div
+        className={
+          loading ||
+            zipBusy ||
+            savingSitemap ||
+            loadingSitemap ||
+            exportingCsv ||
+            exportingJson
+            ? "scraper-footer scraper-footer--working"
+            : "scraper-footer"
+        }
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          flexWrap: "wrap",
+          minHeight: crawlProgress && loading ? 52 : undefined,
+        }}
+      >
+        <div style={{ flexShrink: 0 }}>Pages scraped: {pages.length}</div>
+        {crawlProgress ? (
+          <div
+            style={{
+              flex: "1 1 200px",
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                gap: "8px",
+                fontSize: "11px",
+                fontWeight: 600,
+                color: "rgba(255,255,255,0.95)",
+              }}
+            >
+              <span>
+                Crawl {crawlProgress.current} / {crawlProgress.total}
+              </span>
+              <span style={{ fontWeight: 500, opacity: 0.9 }}>in progress</span>
+            </div>
+            <div
+              title={crawlProgress.url}
+              style={{
+                fontSize: "11px",
+                color: "rgba(255,255,255,0.88)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontFamily: "Consolas, ui-monospace, monospace",
+              }}
+            >
+              {crawlProgress.url}
+            </div>
+            <div
+              style={{
+                height: "6px",
+                borderRadius: "4px",
+                background: "rgba(255,255,255,0.25)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: `${Math.min(
+                    100,
+                    (crawlProgress.current / Math.max(1, crawlProgress.total)) * 100,
+                  )}%`,
+                  background: "rgba(255,255,255,0.95)",
+                  borderRadius: "4px",
+                  transition: "width 0.2s ease-out",
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div style={{ flex: 1 }} />
+        )}
+        <div style={{ flexShrink: 0, marginLeft: "auto" }}>
+          {loading ||
+          zipBusy ||
+          savingSitemap ||
+          loadingSitemap ||
+          exportingCsv ||
+          exportingJson
+            ? "Working..."
+            : "Done"}
+        </div>
       </div>
     </div>
   );

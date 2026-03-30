@@ -1,3 +1,4 @@
+import concurrent.futures
 import csv
 import hashlib
 import io
@@ -122,24 +123,17 @@ def fetch_url_for_download(
         return None, "", str(e)
 
 
-def _fetch_into_zip(
+def _write_fetched_bytes_to_zip(
     zf: zipfile.ZipFile,
     url: str,
     file_idx: int,
-    session: requests.Session,
+    data: bytes,
+    fname: str,
 ) -> tuple[str, str]:
-    """
-    Download url and store in zip. Returns (archive_path, status).
-    archive_path empty if skipped/failed.
-    """
+    """Write already-downloaded bytes into the archive. Returns (archive_path, status)."""
     safe_base = f"media/{file_idx:04d}_{hashlib.md5(url.encode('utf-8')).hexdigest()[:10]}"
-    data, _fname, err = fetch_url_for_download(url, session)
-    if err or not data:
-        return "", err or "failed"
-
-    ext = PurePath(_fname).suffix.lower() or _ext_from_url(url) or ".bin"
+    ext = PurePath(fname).suffix.lower() or _ext_from_url(url) or ".bin"
     arc = f"{safe_base}{ext}"
-
     compress = (
         zipfile.ZIP_STORED
         if ext in (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
@@ -149,6 +143,24 @@ def _fetch_into_zip(
     zi.compress_type = compress
     zf.writestr(zi, data)
     return arc, "downloaded"
+
+
+def _prefetch_urls_parallel(urls: list[str], max_workers: int = 4) -> dict[str, tuple[Optional[bytes], str, str]]:
+    """Download many URLs concurrently (each uses its own requests session)."""
+    out: dict[str, tuple[Optional[bytes], str, str]] = {}
+    if not urls:
+        return out
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_url = {
+            pool.submit(fetch_url_for_download, u, None): u for u in urls
+        }
+        for fut in concurrent.futures.as_completed(future_to_url):
+            u = future_to_url[fut]
+            try:
+                out[u] = fut.result()
+            except Exception as e:
+                out[u] = (None, "", str(e))
+    return out
 
 
 def create_media_zip(entries: list[dict], mode: str) -> str:
@@ -161,8 +173,15 @@ def create_media_zip(entries: list[dict], mode: str) -> str:
     tmp.close()
     zip_path = tmp.name
 
-    session = requests.Session()
-    session.headers.update(REQUEST_HEADERS)
+    unique_urls: list[str] = []
+    seen_u: set[str] = set()
+    for entry in entries:
+        mu = (entry.get("mediaUrl") or "").strip()
+        if mu and mu not in seen_u:
+            seen_u.add(mu)
+            unique_urls.append(mu)
+
+    prefetch = _prefetch_urls_parallel(unique_urls, max_workers=4)
 
     url_result: dict[str, tuple[str, str]] = {}
     file_idx = 0
@@ -170,6 +189,17 @@ def create_media_zip(entries: list[dict], mode: str) -> str:
     manifest_rows: list[dict] = []
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for media_url in unique_urls:
+            data, fname, err = prefetch.get(
+                media_url, (None, "", "missing_prefetch")
+            )
+            if err or not data:
+                url_result[media_url] = ("", err or "failed")
+                continue
+            arc, _st = _write_fetched_bytes_to_zip(zf, media_url, file_idx, data, fname)
+            url_result[media_url] = (arc, "downloaded")
+            file_idx += 1
+
         for entry in entries:
             media_url = (entry.get("mediaUrl") or "").strip()
             source_url = (entry.get("sourcePageUrl") or "").strip()
@@ -185,12 +215,7 @@ def create_media_zip(entries: list[dict], mode: str) -> str:
                 )
                 continue
 
-            if media_url not in url_result:
-                arc, status = _fetch_into_zip(zf, media_url, file_idx, session)
-                url_result[media_url] = (arc, status)
-                file_idx += 1
-
-            arc, status = url_result[media_url]
+            arc, status = url_result.get(media_url, ("", "missing"))
             manifest_rows.append(
                 {
                     "source_page_url": source_url,

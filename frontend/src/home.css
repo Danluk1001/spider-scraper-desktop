@@ -63,10 +63,17 @@
   padding: 0 12px;
   background: #dcfce7;
   border-top: 1px solid #86efac;
+  color: #111827;
   font-size: 13px;
   font-weight: 600;
   width: 100%;
   box-sizing: border-box;
+}
+
+.scraper-footer--working {
+  background: #dc2626;
+  border-top-color: #b91c1c;
+  color: #ffffff;
 }
 
 .scraper-root-input {

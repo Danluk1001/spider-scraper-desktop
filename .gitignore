@@ -1,0 +1,2 @@
+# Local sitemap JSON snapshots (dev data dir; see backend/data_paths.py)
+backend/data/sitemaps/*.json
