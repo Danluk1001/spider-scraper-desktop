@@ -35,7 +35,47 @@ export default function Home() {
     "Images",
     "Videos",
   ];
+const scrapeLinkedPage = async (page: ScrapedPage) => {
+  if (page.category !== "linked-page") {
+    setSelectedPage(page);
+    return;
+  }
 
+  setLoading(true);
+  setLogs((prev) => [...prev, `GET ${page.url}`]);
+
+  try {
+    const response = await axios.post("http://127.0.0.1:5000/api/scrape", {
+      url: page.url,
+    });
+
+    const result = response.data;
+
+    const updatedPage: ScrapedPage = {
+      ...page,
+      title: result.title,
+      paragraph_count: result.paragraph_count,
+      preview: result.preview,
+      html: result.preview.join("\n\n"),
+      links: result.links || [],
+      images: result.images || [],
+      videos: result.videos || [],
+    };
+
+    const updatedPages = pages.map((p) =>
+      p.id === page.id ? updatedPage : p
+    );
+
+    setPages(updatedPages);
+    setSelectedPage(updatedPage);
+    setLogs((prev) => [...prev, `SUCCESS ${page.url}`]);
+  } catch (error) {
+    console.error(error);
+    setLogs((prev) => [...prev, `ERROR scraping ${page.url}`]);
+  } finally {
+    setLoading(false);
+  }
+};
   const handleScrapeSite = async () => {
     if (!rootUrl.trim()) return;
 
@@ -208,7 +248,7 @@ export default function Home() {
                 return (
                   <div
                     key={page.id}
-                    onClick={() => setSelectedPage(page)}
+                    onClick={() => scrapeLinkedPage(page)}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "42% 18% 40%",
