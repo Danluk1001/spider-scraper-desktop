@@ -9,6 +9,7 @@ type ScrapedPage = {
   paragraph_count: number;
   preview: string[];
   html?: string;
+  links?: string[];
 };
 
 export default function Home() {
@@ -45,18 +46,31 @@ export default function Home() {
 
       const result = response.data;
 
-      const newPage: ScrapedPage = {
-        id: Date.now(),
-        title: result.title,
-        category: "home",
-        url: result.url,
-        paragraph_count: result.paragraph_count,
-        preview: result.preview,
-        html: result.preview.join("\n\n"),
-      };
+      const newPages: ScrapedPage[] = [
+        {
+          id: Date.now(),
+          title: result.title,
+          category: "home",
+          url: result.url,
+          paragraph_count: result.paragraph_count,
+          preview: result.preview,
+          html: result.preview.join("\n\n"),
+          links: result.links,
+        },
+        ...(result.links || []).map((link: string, index: number) => ({
+          id: Date.now() + index + 1,
+          title: link.replace(/^https?:\/\//, ""),
+          category: "linked-page",
+          url: link,
+          paragraph_count: 0,
+          preview: [],
+          html: "",
+          links: [],
+        })),
+      ];
 
-      setPages([newPage]);
-      setSelectedPage(newPage);
+      setPages(newPages);
+      setSelectedPage(newPages[0]);
       setLogs((prev) => [...prev, `SUCCESS ${result.url}`]);
     } catch (error) {
       console.error(error);
@@ -305,7 +319,14 @@ Paragraph Count: ${selectedPage.paragraph_count}
 Active Tab: ${activeTab}
 
 Preview:
-${selectedPage.preview.join("\n\n")}`}
+${selectedPage.preview.join("\n\n")}${
+  selectedPage.links && selectedPage.links.length > 0
+    ? `
+
+Links Found:
+${selectedPage.links.join("\n")}`
+    : ""
+}`}
               </pre>
             )}
           </div>

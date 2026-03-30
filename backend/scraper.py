@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 
 def scrape_page(url):
     headers = {
@@ -19,9 +20,23 @@ def scrape_page(url):
         if text:
             paragraphs.append(text)
 
+    links = []
+    base_domain = urlparse(url).netloc
+
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        absolute_url = urljoin(url, href)
+
+        parsed = urlparse(absolute_url)
+
+        if parsed.netloc == base_domain:
+            if absolute_url not in links:
+                links.append(absolute_url)
+
     return {
         "title": title,
         "url": url,
         "paragraph_count": len(paragraphs),
-        "preview": paragraphs[:5]
+        "preview": paragraphs[:5],
+        "links": links[:20]
     }
