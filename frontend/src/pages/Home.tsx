@@ -1,24 +1,23 @@
 import { useState } from "react";
+import axios from "axios";
 
 type ScrapedPage = {
   id: number;
   title: string;
   category: string;
   url: string;
+  paragraph_count: number;
+  preview: string[];
+  html?: string;
 };
-
-const mockPages: ScrapedPage[] = [
-  { id: 1, title: "Home Page 25-26 - IRVINGTON PUBLIC SCHOOLS", category: "home", url: "https://irvington.k12.nj.us/" },
-  { id: 2, title: "Site Search - IRVINGTON PUBLIC SCHOOLS", category: "search", url: "https://irvington.k12.nj.us/search/" },
-  { id: 3, title: "Calendar - IRVINGTON PUBLIC SCHOOLS", category: "district", url: "https://irvington.k12.nj.us/district/calendar/" },
-  { id: 4, title: "Staff Links - IRVINGTON PUBLIC SCHOOLS", category: "staff-links", url: "https://irvington.k12.nj.us/staff-links/" },
-  { id: 5, title: "Augusta Preschool - IRVINGTON PUBLIC SCHOOLS", category: "schools", url: "https://irvington.k12.nj.us/schools/augusta-preschool-academy/" },
-];
 
 export default function Home() {
   const [rootUrl, setRootUrl] = useState("https://irvington.k12.nj.us/");
-  const [selectedPage, setSelectedPage] = useState<ScrapedPage | null>(mockPages[0]);
+  const [pages, setPages] = useState<ScrapedPage[]>([]);
+  const [selectedPage, setSelectedPage] = useState<ScrapedPage | null>(null);
   const [activeTab, setActiveTab] = useState("Text View");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const tabs = [
     "Text View",
@@ -32,6 +31,40 @@ export default function Home() {
     "Regex Search",
     "Scraped Images",
   ];
+
+  const handleScrapeSite = async () => {
+    if (!rootUrl.trim()) return;
+
+    setLoading(true);
+    setLogs((prev) => [...prev, `GET ${rootUrl}`]);
+
+    try {
+      const response = await axios.post("http://127.0.0.1:5000/api/scrape", {
+        url: rootUrl,
+      });
+
+      const result = response.data;
+
+      const newPage: ScrapedPage = {
+        id: Date.now(),
+        title: result.title,
+        category: "home",
+        url: result.url,
+        paragraph_count: result.paragraph_count,
+        preview: result.preview,
+        html: result.preview.join("\n\n"),
+      };
+
+      setPages([newPage]);
+      setSelectedPage(newPage);
+      setLogs((prev) => [...prev, `SUCCESS ${result.url}`]);
+    } catch (error) {
+      console.error(error);
+      setLogs((prev) => [...prev, `ERROR scraping ${rootUrl}`]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div
@@ -73,7 +106,24 @@ export default function Home() {
           }}
         />
 
-        {["Create Sitemap", "Save Sitemap", "Load Sitemap", "Settings"].map((btn) => (
+        <button
+          onClick={handleScrapeSite}
+          disabled={loading}
+          style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #2563eb",
+            background: loading ? "#93c5fd" : "#2563eb",
+            color: "#fff",
+            cursor: "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+          }}
+        >
+          {loading ? "Scraping..." : "Scrape Site"}
+        </button>
+
+        {["Save Sitemap", "Load Sitemap", "Settings"].map((btn) => (
           <button
             key={btn}
             style={{
@@ -127,33 +177,51 @@ export default function Home() {
           </div>
 
           <div style={{ overflowY: "auto", flex: 1 }}>
-            {mockPages.map((page) => {
-              const selected = selectedPage?.id === page.id;
-              return (
-                <div
-                  key={page.id}
-                  onClick={() => setSelectedPage(page)}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "42% 18% 40%",
-                    padding: "10px 12px",
-                    borderBottom: "1px solid #e5e7eb",
-                    cursor: "pointer",
-                    background: selected ? "#dbeafe" : "#ffffff",
-                    color: selected ? "#1d4ed8" : "#111827",
-                    fontSize: "13px",
-                  }}
-                >
-                  <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {page.title}
+            {pages.length === 0 ? (
+              <div style={{ padding: "16px", color: "#6b7280", fontSize: "14px" }}>
+                No pages scraped yet.
+              </div>
+            ) : (
+              pages.map((page) => {
+                const selected = selectedPage?.id === page.id;
+                return (
+                  <div
+                    key={page.id}
+                    onClick={() => setSelectedPage(page)}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "42% 18% 40%",
+                      padding: "10px 12px",
+                      borderBottom: "1px solid #e5e7eb",
+                      cursor: "pointer",
+                      background: selected ? "#dbeafe" : "#ffffff",
+                      color: selected ? "#1d4ed8" : "#111827",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {page.title}
+                    </div>
+                    <div>{page.category}</div>
+                    <div
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {page.url}
+                    </div>
                   </div>
-                  <div>{page.category}</div>
-                  <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {page.url}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -196,7 +264,8 @@ export default function Home() {
                 style={{
                   padding: "8px 10px",
                   borderRadius: "8px",
-                  border: activeTab === tab ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                  border:
+                    activeTab === tab ? "1px solid #2563eb" : "1px solid #cbd5e1",
                   background: activeTab === tab ? "#dbeafe" : "#ffffff",
                   color: activeTab === tab ? "#1d4ed8" : "#374151",
                   fontSize: "12px",
@@ -219,27 +288,26 @@ export default function Home() {
               background: "#ffffff",
             }}
           >
-            <pre
-              style={{
-                margin: 0,
-                fontFamily: "Consolas, monospace",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-{`Title: ${selectedPage?.title || ""}
-Category: ${selectedPage?.category || ""}
-URL: ${selectedPage?.url || ""}
+            {!selectedPage ? (
+              <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
+            ) : (
+              <pre
+                style={{
+                  margin: 0,
+                  fontFamily: "Consolas, monospace",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {`Title: ${selectedPage.title}
+Category: ${selectedPage.category}
+URL: ${selectedPage.url}
+Paragraph Count: ${selectedPage.paragraph_count}
 Active Tab: ${activeTab}
 
-This panel will later show:
-- extracted text
-- HTML source
-- metadata
-- JSON
-- images
-- table data
-- regex results`}
-            </pre>
+Preview:
+${selectedPage.preview.join("\n\n")}`}
+              </pre>
+            )}
           </div>
         </div>
       </div>
@@ -267,10 +335,11 @@ This panel will later show:
             overflowY: "auto",
           }}
         >
-          GET https://irvington.k12.nj.us/ <br />
-          GET https://irvington.k12.nj.us/search/ <br />
-          GET https://irvington.k12.nj.us/district/calendar/ <br />
-          GET https://irvington.k12.nj.us/staff-links/
+          {logs.length === 0 ? (
+            <div>No activity yet.</div>
+          ) : (
+            logs.map((log, index) => <div key={index}>{log}</div>)
+          )}
         </div>
       </div>
 
@@ -286,8 +355,8 @@ This panel will later show:
           fontWeight: 600,
         }}
       >
-        <div>Pages scraped: 150</div>
-        <div>Done</div>
+        <div>Pages scraped: {pages.length}</div>
+        <div>{loading ? "Working..." : "Done"}</div>
       </div>
     </div>
   );
