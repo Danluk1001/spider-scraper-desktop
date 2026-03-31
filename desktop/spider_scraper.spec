@@ -11,6 +11,7 @@
 # at runtime; desktop/launcher.py and backend/data_paths.py already resolve
 # frontend/dist from there when frozen.
 
+import os
 from pathlib import Path
 
 block_cipher = None
@@ -20,12 +21,16 @@ _launcher = _repo_root / "desktop" / "launcher.py"
 _dist = _repo_root / "frontend" / "dist"
 _resources = _repo_root / "desktop" / "resources"
 _icon = _resources / "icon.ico"
+_playwright = _repo_root / "ms-playwright"
+_bundle_playwright = os.environ.get("SPIDER_BUNDLE_PLAYWRIGHT", "0").lower() in ("1", "true", "yes")
 
 _datas = []
 if _dist.is_dir() and (_dist / "index.html").is_file():
     _datas.append((str(_dist), "frontend/dist"))
 if _resources.is_dir():
     _datas.append((str(_resources), "desktop/resources"))
+if _bundle_playwright and _playwright.is_dir():
+    _datas.append((str(_playwright), "ms-playwright"))
 
 a = Analysis(
     [str(_launcher)],

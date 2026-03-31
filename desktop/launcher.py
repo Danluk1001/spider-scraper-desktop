@@ -65,6 +65,10 @@ def _apply_packaged_env(root: Path, dev: bool) -> None:
     os.environ.setdefault("SPIDER_SCRAPER_FRONTEND_DIST", str(dist))
     # Stable desktop runs: no Flask reloader / extra threads from debug toolbar.
     os.environ.setdefault("SPIDER_SCRAPER_DEBUG", "0")
+    # Optional bundled Playwright browsers: _MEIPASS/ms-playwright.
+    bundled_pw = root / "ms-playwright"
+    if bundled_pw.is_dir():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled_pw))
 
 
 def _wait_for_http(url: str, timeout: float = 90.0) -> bool:
