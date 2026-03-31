@@ -33,3 +33,20 @@
 2026-03-31 13:24:21,950 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:24:21] "GET /api/screenshots HTTP/1.1" 200 -
 2026-03-31 13:24:21,956 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:24:21] "GET /api/screenshots HTTP/1.1" 200 -
 2026-03-31 13:24:38,275 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:24:38] "POST /api/crawl/stream HTTP/1.1" 200 -
+2026-03-31 13:25:09,932 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:25:09] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:25:09,938 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:25:09] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:25:42,670 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:25:42] "POST /api/crawl/stream HTTP/1.1" 200 -
+2026-03-31 13:29:08,510 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:29:08] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:29:08,514 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:29:08] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:29:12,860 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:29:12] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:30:10,598 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:30:10] "POST /api/crawl/stream HTTP/1.1" 200 -
+2026-03-31 13:33:59,095 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:33:59] "POST /api/crawl/stream HTTP/1.1" 200 -
+2026-03-31 13:34:06,048 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:34:06] "POST /api/crawl/stream HTTP/1.1" 200 -
+2026-03-31 13:37:25,495 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:37:25] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:37:25,501 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:37:25] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:41:21,072 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 13:41:21,072 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 13:41:21,074 INFO werkzeug:  * Restarting with stat
+2026-03-31 13:41:21,674 WARNING werkzeug:  * Debugger is active!
+2026-03-31 13:41:21,680 INFO werkzeug:  * Debugger PIN: 521-574-119

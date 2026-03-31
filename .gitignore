@@ -1,4 +1,26 @@
-# Local sitemap JSON snapshots (dev data dir; see backend/data_paths.py)
-backend/data/sitemaps/*.json
-# Playwright full-page captures (POST /api/screenshot)
-backend/data/screenshots/*.png
+# Python
+backend/venv/
+**/__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Environment / OS
+.env
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Output folders
+output/*
+data/screenshots/*
+data/exports/*
+
+# Keep folders if needed
+!output/.gitkeep
+!data/screenshots/.gitkeep
+!data/exports/.gitkeep

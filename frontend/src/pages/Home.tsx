@@ -3818,71 +3818,47 @@ ${selectedPage.preview.join("\n\n")}`}
           display: "flex",
           alignItems: "center",
           gap: "12px",
-          flexWrap: "wrap",
-          minHeight: crawlProgress && loading ? 52 : undefined,
+          flexWrap: "nowrap",
+          minHeight: 40,
         }}
       >
         <div style={{ flexShrink: 0 }}>Pages scraped: {pages.length}</div>
         {crawlProgress ? (
           <div
+            title={crawlProgress.url}
             style={{
-              flex: "1 1 200px",
+              flex: "1 1 auto",
               minWidth: 0,
               display: "flex",
-              flexDirection: "column",
-              gap: "4px",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.95)",
+              overflow: "hidden",
             }}
           >
-            <div
+            <span style={{ flexShrink: 0 }}>
+              Crawl {crawlProgress.current} / {crawlProgress.total}
+            </span>
+            <span style={{ flexShrink: 0, opacity: 0.85 }}>·</span>
+            <span style={{ flexShrink: 0, fontWeight: 500, opacity: 0.92 }}>
+              in progress
+            </span>
+            <span style={{ flexShrink: 0, opacity: 0.85 }}>·</span>
+            <span
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                gap: "8px",
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "rgba(255,255,255,0.95)",
-              }}
-            >
-              <span>
-                Crawl {crawlProgress.current} / {crawlProgress.total}
-              </span>
-              <span style={{ fontWeight: 500, opacity: 0.9 }}>in progress</span>
-            </div>
-            <div
-              title={crawlProgress.url}
-              style={{
-                fontSize: "11px",
-                color: "rgba(255,255,255,0.88)",
+                fontWeight: 500,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                minWidth: 0,
                 fontFamily: "Consolas, ui-monospace, monospace",
+                color: "rgba(255,255,255,0.88)",
               }}
             >
               {crawlProgress.url}
-            </div>
-            <div
-              style={{
-                height: "6px",
-                borderRadius: "4px",
-                background: "rgba(255,255,255,0.25)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  width: `${Math.min(
-                    100,
-                    (crawlProgress.current / Math.max(1, crawlProgress.total)) * 100,
-                  )}%`,
-                  background: "rgba(255,255,255,0.95)",
-                  borderRadius: "4px",
-                  transition: "width 0.2s ease-out",
-                }}
-              />
-            </div>
+            </span>
           </div>
         ) : (
           <div style={{ flex: 1 }} />
