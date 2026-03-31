@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const desktopMode = process.env.VITE_DESKTOP_MODE === '1'
+
 // https://vite.dev/config/
 export default defineConfig({
+  // Desktop packaged webview/file serving needs relative asset paths.
+  base: desktopMode ? './' : '/',
   plugins: [react()],
   server: {
     proxy: {

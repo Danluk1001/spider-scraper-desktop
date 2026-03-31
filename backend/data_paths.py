@@ -15,6 +15,7 @@ from pathlib import Path
 
 _APP_NAME = "SpiderScraper"
 _ENV_DATA_DIR = "SPIDER_SCRAPER_DATA_DIR"
+_ENV_FRONTEND_DIST = "SPIDER_SCRAPER_FRONTEND_DIST"
 
 
 def get_backend_root() -> Path:
@@ -50,6 +51,39 @@ def get_data_directory() -> Path:
     return get_backend_root() / "data"
 
 
+def get_frontend_dist_directory() -> Path | None:
+    """
+    Root of the built Vite app (``frontend/dist``) when Flask serves the SPA.
+
+    Resolution:
+    1. ``SPIDER_SCRAPER_FRONTEND_DIST`` if set (absolute path to ``dist``).
+    2. PyInstaller: ``sys._MEIPASS/frontend/dist`` if that folder exists.
+    3. PyInstaller fallback: ``<exe_dir>/frontend/dist``.
+    4. Development: ``<repo>/frontend/dist`` if present.
+
+    Returns ``None`` if no usable directory exists (caller should skip SPA routes).
+    """
+    override = os.environ.get(_ENV_FRONTEND_DIST)
+    if override:
+        p = Path(override).expanduser().resolve()
+        return p if p.is_dir() else None
+
+    if _is_frozen():
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidate = Path(meipass) / "frontend" / "dist"
+            if candidate.is_dir():
+                return candidate
+        exe_dir = Path(sys.executable).resolve().parent
+        candidate = exe_dir / "frontend" / "dist"
+        if candidate.is_dir():
+            return candidate
+        return None
+
+    candidate = get_backend_root().parent / "frontend" / "dist"
+    return candidate if candidate.is_dir() else None
+
+
 def get_sitemap_directory() -> Path:
     """Dedicated folder for saved sitemap JSON snapshots."""
     return get_data_directory() / "sitemaps"
@@ -58,6 +92,51 @@ def get_sitemap_directory() -> Path:
 def get_screenshots_directory() -> Path:
     """PNG captures of remote pages (Playwright full-page screenshots)."""
     return get_data_directory() / "screenshots"
+
+
+def get_exports_directory() -> Path:
+    """User-exported files (CSV/JSON downloads) for desktop packaging."""
+    return get_data_directory() / "exports"
+
+
+def get_logs_directory() -> Path:
+    """Backend runtime logs for troubleshooting desktop builds."""
+    return get_data_directory() / "logs"
+
+
+def get_config_file_path() -> Path:
+    """Primary app config JSON (editable by users / installer scripts)."""
+    return get_data_directory() / "config.json"
+
+
+def ensure_app_data_directories() -> dict[str, Path]:
+    """
+    Create all writable app data folders and return them.
+    Safe to call on startup in dev and packaged modes.
+    """
+    root = get_data_directory()
+    dirs = {
+        "data": root,
+        "sitemaps": get_sitemap_directory(),
+        "screenshots": get_screenshots_directory(),
+        "exports": get_exports_directory(),
+        "logs": get_logs_directory(),
+    }
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
+def safe_join_data_path(*parts: str) -> Path:
+    """
+    Join under data root and block path traversal.
+    Raises ValueError if the resolved path escapes data root.
+    """
+    root = get_data_directory().resolve()
+    out = root.joinpath(*parts).resolve()
+    if out == root or root in out.parents:
+        return out
+    raise ValueError("unsafe data path")
 
 
 def legacy_sitemap_directory() -> Path:

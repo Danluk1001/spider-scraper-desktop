@@ -1,21 +1,60 @@
 import io
 import json
+import logging
 import queue
 import re
 import threading
 from datetime import datetime, timezone
 
-from flask import Flask, Response, after_this_request, jsonify, request, send_file, stream_with_context
+from flask import (
+    Flask,
+    Response,
+    abort,
+    after_this_request,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+    stream_with_context,
+)
 from flask_cors import CORS
-from data_paths import get_screenshots_directory, get_sitemap_directory, iter_sitemap_json_files, resolve_sitemap_file
+from app_config import load_app_config, save_app_config
+from data_paths import (
+    ensure_app_data_directories,
+    get_exports_directory,
+    get_frontend_dist_directory,
+    get_logs_directory,
+    get_screenshots_directory,
+    get_sitemap_directory,
+    iter_sitemap_json_files,
+    resolve_sitemap_file,
+    safe_join_data_path,
+)
 from page_screenshot import PageScreenshotError, PlaywrightMissingError, capture_page_screenshot_png
 from scraper import crawl_site_depth, scrape_page
 from media_zip import create_media_zip, fetch_url_for_download
 import csv
 import os
-from typing import Optional
+from typing import Any, Optional
 
 app = Flask(__name__)
+
+# Ensure packaged app always has writable folders on startup.
+_APP_DIRS = ensure_app_data_directories()
+_APP_CONFIG = load_app_config()
+
+# Desktop-friendly logging: file + stderr.
+try:
+    _LOG_PATH = get_logs_directory() / "backend.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(_LOG_PATH, encoding="utf-8"), logging.StreamHandler()],
+    )
+except OSError:
+    logging.basicConfig(level=logging.INFO)
+
+log = logging.getLogger("spider_scraper.backend")
 
 
 def _parse_max_pages(data: dict) -> Optional[int]:
@@ -38,6 +77,30 @@ CORS(app)
 @app.route("/api/health")
 def health():
     return jsonify({"status": "Spider Scraper backend is running"})
+
+
+@app.route("/api/config", methods=["GET"])
+def api_get_config():
+    """Return effective backend config (file + env overrides)."""
+    cfg = load_app_config()
+    return jsonify({"config": cfg})
+
+
+@app.route("/api/config", methods=["POST"])
+def api_save_config():
+    """
+    Save backend config JSON for desktop use.
+    Body: { "config": { ... } }
+    """
+    data = request.get_json() or {}
+    cfg = data.get("config")
+    if not isinstance(cfg, dict):
+        return jsonify({"error": "config must be an object"}), 400
+    try:
+        save_app_config(cfg)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "config": cfg})
 
 @app.route("/api/scrape", methods=["POST"])
 def scrape():
@@ -153,11 +216,14 @@ def crawl_stream():
 
 @app.route("/api/export", methods=["POST"])
 def export_csv():
-    data = request.get_json()
+    data = request.get_json() or {}
+    export_dir = get_exports_directory()
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"scrape-results-{stamp}.csv"
+    out_path = safe_join_data_path("exports", filename)
 
-    filename = "scrape_results.csv"
-
-    with open(filename, mode="w", newline="", encoding="utf-8") as file:
+    with open(out_path, mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["Title", "URL", "Paragraph Count"])
 
@@ -173,10 +239,7 @@ def export_csv():
         for item in data.get("preview", []):
             writer.writerow([item])
 
-    return send_file(
-        os.path.abspath(filename),
-        as_attachment=True
-    )
+    return send_file(str(out_path), as_attachment=True, download_name=filename)
 
 
 def _list_len(obj, key: str) -> int:
@@ -502,6 +565,59 @@ def _is_safe_screenshot_basename(name: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9_.-]+\.png$", name))
 
 
+def _screenshot_index_path() -> str:
+    root = get_screenshots_directory()
+    root.mkdir(parents=True, exist_ok=True)
+    return str(root / "index.json")
+
+
+def _load_screenshot_index() -> list[dict[str, Any]]:
+    path = _screenshot_index_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return []
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in data:
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def _save_screenshot_index(items: list[dict[str, Any]]) -> None:
+    path = _screenshot_index_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=True, indent=2)
+
+
+def _append_screenshot_metadata(
+    *,
+    filename: str,
+    image_url: str,
+    page_url: str,
+    page_title: str | None,
+) -> dict[str, Any]:
+    items = _load_screenshot_index()
+    rec: dict[str, Any] = {
+        "filename": filename,
+        "imageUrl": image_url,
+        "pageUrl": page_url,
+        "pageTitle": (page_title or "").strip() or None,
+        "capturedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    items.insert(0, rec)
+    # Keep recent history only (dev-first, keeps JSON small).
+    if len(items) > 300:
+        items = items[:300]
+    _save_screenshot_index(items)
+    return rec
+
+
 @app.route("/api/screenshot", methods=["POST"])
 def api_screenshot_capture():
     """
@@ -534,13 +650,14 @@ def api_screenshot_capture():
         return jsonify({"error": str(e)}), 500
 
     filename = path.name
-    return jsonify(
-        {
-            "ok": True,
-            "filename": filename,
-            "imageUrl": f"/api/screenshots/{filename}",
-        }
+    image_url = f"/api/screenshots/{filename}"
+    meta = _append_screenshot_metadata(
+        filename=filename,
+        image_url=image_url,
+        page_url=url,
+        page_title=page_title,
     )
+    return jsonify({"ok": True, **meta})
 
 
 @app.route("/api/screenshots/<filename>", methods=["GET"])
@@ -561,6 +678,71 @@ def api_screenshot_file(filename: str):
     return send_file(path, mimetype="image/png", max_age=0)
 
 
+@app.route("/api/screenshots", methods=["GET"])
+def api_screenshot_list():
+    """
+    List saved screenshot metadata for the gallery UI.
+    Returns newest-first items from screenshots/index.json.
+    """
+    items = _load_screenshot_index()
+    root = get_screenshots_directory()
+    out: list[dict[str, Any]] = []
+    for row in items:
+        filename = str(row.get("filename") or "").strip()
+        image_url = str(row.get("imageUrl") or "").strip()
+        if not _is_safe_screenshot_basename(filename):
+            continue
+        path = root / filename
+        if not path.is_file():
+            continue
+        out.append(
+            {
+                "filename": filename,
+                "imageUrl": image_url or f"/api/screenshots/{filename}",
+                "pageUrl": str(row.get("pageUrl") or ""),
+                "pageTitle": row.get("pageTitle"),
+                "capturedAt": str(row.get("capturedAt") or ""),
+            }
+        )
+    return jsonify({"items": out})
+
+
+# Desktop / PyInstaller: serve the built Vite app from the same origin as the API.
+# Set SPIDER_SCRAPER_SERVE_FRONTEND=1 before importing this module (see desktop/launcher.py).
+if os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND") == "1":
+    _spa_dist = get_frontend_dist_directory()
+    if _spa_dist and _spa_dist.is_dir():
+        _spa_root = _spa_dist.resolve()
+
+        @app.route("/", defaults={"path": ""})
+        @app.route("/<path:path>")
+        def serve_spa(path: str):
+            if path.startswith("api"):
+                abort(404)
+            if path:
+                target = (_spa_dist / path).resolve()
+                try:
+                    target.relative_to(_spa_root)
+                except ValueError:
+                    return send_from_directory(str(_spa_dist), "index.html")
+                try:
+                    if target.is_file():
+                        return send_file(target)
+                except OSError:
+                    pass
+            return send_from_directory(str(_spa_dist), "index.html")
+    else:
+        log.warning(
+            "SPIDER_SCRAPER_SERVE_FRONTEND is set but frontend dist is missing. "
+            "Build with: cd frontend && set VITE_DESKTOP_MODE=1 && npm run build"
+        )
+
+
 if __name__ == "__main__":
     # threaded=True helps long ZIP / download requests not block other clients
-    app.run(debug=True, threaded=True)
+    app.run(
+        host=str(_APP_CONFIG.get("backend_host") or "127.0.0.1"),
+        port=int(_APP_CONFIG.get("backend_port") or 5000),
+        debug=bool(_APP_CONFIG.get("backend_debug", True)),
+        threaded=True,
+    )

@@ -995,6 +995,14 @@ type ScreenshotErrorState =
   | { kind: "playwright_missing" }
   | { kind: "generic"; message: string };
 
+type ScreenshotGalleryItem = {
+  filename: string;
+  imageUrl: string;
+  pageUrl: string;
+  pageTitle?: string | null;
+  capturedAt?: string;
+};
+
 function parseScreenshotApiError(data: unknown): Exclude<ScreenshotErrorState, null> {
   if (data && typeof data === "object" && "error" in data) {
     const d = data as { error?: unknown; message?: unknown };
@@ -1166,6 +1174,126 @@ function PageScreenshotPanel({
       ) : !busy ? (
         <div style={{ color: "#94a3b8", fontSize: "13px" }}>No screenshot yet. Click Capture.</div>
       ) : null}
+    </div>
+  );
+}
+
+function ScreenshotGalleryPanel({
+  items,
+  loading,
+  error,
+  onRefresh,
+}: {
+  items: ScreenshotGalleryItem[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        padding: "14px 16px",
+        boxSizing: "border-box",
+        gap: "12px",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+        <div style={{ fontSize: "13px", color: "#334155" }}>
+          <strong>{items.length}</strong> screenshot{items.length === 1 ? "" : "s"} saved
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          style={{
+            padding: "7px 12px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: loading ? "#e2e8f0" : "#ffffff",
+            color: "#334155",
+            fontSize: "12px",
+            fontWeight: 600,
+            cursor: loading ? "wait" : "pointer",
+          }}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      {error ? <div style={{ color: "#b91c1c", fontSize: "13px", fontWeight: 600 }}>{error}</div> : null}
+      {items.length === 0 ? (
+        <div style={{ color: "#64748b", fontSize: "13px" }}>
+          No screenshots yet. Capture a screenshot in the <strong>Screenshot</strong> tab first.
+        </div>
+      ) : (
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "auto",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+            gap: "12px",
+            alignContent: "start",
+          }}
+        >
+          {items.map((item) => (
+            <a
+              key={item.filename}
+              href={apiUrl(item.imageUrl)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                border: "1px solid #e2e8f0",
+                borderRadius: "10px",
+                overflow: "hidden",
+                background: "#ffffff",
+                textDecoration: "none",
+                color: "inherit",
+                display: "flex",
+                flexDirection: "column",
+              }}
+              title={`Open full image\n${item.pageUrl}`}
+            >
+              <img
+                src={`${apiUrl(item.imageUrl)}?thumb=${encodeURIComponent(item.filename)}`}
+                alt={item.pageTitle || item.pageUrl || item.filename}
+                style={{ width: "100%", height: 140, objectFit: "cover", background: "#f1f5f9" }}
+              />
+              <div style={{ padding: "8px 10px", display: "grid", gap: "4px" }}>
+                <div
+                  style={{
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                  title={item.pageTitle || item.pageUrl}
+                >
+                  {item.pageTitle || "(Untitled page)"}
+                </div>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#64748b",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                  title={item.pageUrl}
+                >
+                  {item.pageUrl}
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2315,6 +2443,9 @@ export default function Home() {
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState<string | null>(null);
   const [screenshotError, setScreenshotError] = useState<ScreenshotErrorState>(null);
+  const [screenshotGalleryItems, setScreenshotGalleryItems] = useState<ScreenshotGalleryItem[]>([]);
+  const [screenshotGalleryBusy, setScreenshotGalleryBusy] = useState(false);
+  const [screenshotGalleryError, setScreenshotGalleryError] = useState<string | null>(null);
 
   /** Left table: search / filters apply only to the visible list (``pages`` is unchanged). */
   const [tableSearchQuery, setTableSearchQuery] = useState("");
@@ -2365,6 +2496,7 @@ export default function Home() {
     "Images",
     "Videos",
     "Screenshot",
+    "Screenshot Gallery",
     "Sitemap Graph",
   ];
 
@@ -2832,7 +2964,39 @@ export default function Home() {
     activeTab === "CSS" ||
     activeTab === "JavaScript" ||
     activeTab === "Regex Search" ||
-    activeTab === "Screenshot";
+    activeTab === "Screenshot" ||
+    activeTab === "Screenshot Gallery";
+
+  const loadScreenshotGallery = useCallback(async () => {
+    setScreenshotGalleryBusy(true);
+    setScreenshotGalleryError(null);
+    try {
+      const res = await axios.get<{ items?: ScreenshotGalleryItem[]; error?: string }>(
+        apiUrl("/api/screenshots"),
+        { timeout: 30_000 },
+      );
+      if (Array.isArray(res.data.items)) {
+        setScreenshotGalleryItems(res.data.items);
+      } else if (res.data.error) {
+        setScreenshotGalleryError(res.data.error);
+      } else {
+        setScreenshotGalleryItems([]);
+      }
+    } catch (e: unknown) {
+      if (axios.isAxiosError(e)) {
+        const body = e.response?.data as { error?: string } | undefined;
+        setScreenshotGalleryError(body?.error ?? e.message);
+      } else {
+        setScreenshotGalleryError(String(e));
+      }
+    } finally {
+      setScreenshotGalleryBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadScreenshotGallery();
+  }, [loadScreenshotGallery]);
 
   const handlePageScreenshot = useCallback(async () => {
     const url = selectedPage?.url?.trim();
@@ -2846,7 +3010,7 @@ export default function Home() {
       const res = await axios.post<
         | { ok: true; filename: string; imageUrl: string }
         | { error: string; message?: string }
-      >(apiUrl("/api/screenshot"), { url }, {
+      >(apiUrl("/api/screenshot"), { url, pageTitle: selectedPage?.title ?? "" }, {
         timeout: 120_000,
         headers: { "Content-Type": "application/json" },
       });
@@ -2860,6 +3024,7 @@ export default function Home() {
         return;
       }
       setScreenshotPreviewUrl(`${apiUrl(d.imageUrl)}?t=${Date.now()}`);
+      void loadScreenshotGallery();
     } catch (e: unknown) {
       if (axios.isAxiosError(e)) {
         const body = e.response?.data;
@@ -2872,7 +3037,7 @@ export default function Home() {
     } finally {
       setScreenshotBusy(false);
     }
-  }, [selectedPage?.url]);
+  }, [loadScreenshotGallery, selectedPage?.title, selectedPage?.url]);
 
   return (
     <div className="scraper-app">
@@ -3417,6 +3582,13 @@ export default function Home() {
                 error={screenshotError}
                 onCapture={handlePageScreenshot}
                 onRetry={handlePageScreenshot}
+              />
+            ) : activeTab === "Screenshot Gallery" ? (
+              <ScreenshotGalleryPanel
+                items={screenshotGalleryItems}
+                loading={screenshotGalleryBusy}
+                error={screenshotGalleryError}
+                onRefresh={loadScreenshotGallery}
               />
             ) : !selectedPage ? (
               <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
