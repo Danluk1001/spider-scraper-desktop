@@ -55,6 +55,11 @@ def get_sitemap_directory() -> Path:
     return get_data_directory() / "sitemaps"
 
 
+def get_screenshots_directory() -> Path:
+    """PNG captures of remote pages (Playwright full-page screenshots)."""
+    return get_data_directory() / "screenshots"
+
+
 def legacy_sitemap_directory() -> Path:
     """
     Pre-refactor location: ``<backend>/output/sitemaps``.

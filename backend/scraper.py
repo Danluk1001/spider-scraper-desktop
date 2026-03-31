@@ -7,6 +7,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs, urlunparse
 
+from document_fetch import fetch_discovered_document
+from link_classification import classify_url
+
 # HTTP timeout per page (seconds). Large pages / slow hosts may need more.
 REQUEST_TIMEOUT = 30
 
@@ -359,6 +362,7 @@ def scrape_page(url):
     seen_internal_norm: set[str] = set()
     seen_external_norm: set[str] = set()
     links: list[str] = []
+    document_links: list[dict[str, Any]] = []
     external_links: list[str] = []
 
     for link in soup.find_all("a", href=True):
@@ -376,9 +380,20 @@ def scrape_page(url):
                 external_links.append(absolute_url)
             continue
         key = normalize_url(absolute_url)
-        if key and key not in seen_internal_norm:
-            seen_internal_norm.add(key)
+        if not key or key in seen_internal_norm:
+            continue
+        seen_internal_norm.add(key)
+        cl = classify_url(absolute_url)
+        if cl.get("item_type") == "page":
             links.append(absolute_url)
+        else:
+            document_links.append(
+                {
+                    "url": absolute_url,
+                    "item_type": cl.get("item_type") or "file",
+                    "extension": cl.get("extension") or "",
+                }
+            )
 
     seen_images: set[str] = set()
     images: list[str] = []
@@ -469,9 +484,27 @@ def scrape_page(url):
     css_text = _extract_document_css(soup, url)
     js_text = _extract_document_js(soup, url)
 
+    mime_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
     return {
         "title": title,
         "url": url,
+        "item_type": "page",
+        "mime_type": mime_type or "text/html",
+        "extension": "",
+        "extracted_text": None,
+        "pdf_page_count": None,
+        "pdf_title": None,
+        "pdf_preview_snippet": None,
+        "docx_title": None,
+        "docx_preview_snippet": None,
+        "docx_paragraph_count": None,
+        "epub_title": None,
+        "epub_preview_snippet": None,
+        "epub_chapter_count": None,
+        "file_size": None,
+        "file_metadata": None,
+        "document_links": document_links,
         "paragraph_count": len(paragraphs),
         "paragraphs": paragraphs,
         "preview": paragraphs,
@@ -486,6 +519,76 @@ def scrape_page(url):
         "raw_js": js_text if js_text else None,
         **meta,
     }
+
+
+def _new_node_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _append_documents_crawl_site(
+    document_links: list[dict[str, Any]],
+    base_netloc: str,
+    document_recorded_norm: set[str],
+    pages: list[dict[str, Any]],
+    max_pages: Optional[int],
+) -> None:
+    """Attach discovered file URLs as rows (no HTML crawl). Deduped by normalized URL."""
+    for doc in document_links:
+        if max_pages is not None and len(pages) >= max_pages:
+            break
+        link = (doc.get("url") or "").strip()
+        if not link:
+            continue
+        ln = normalize_url(link)
+        if not ln:
+            continue
+        if urlparse(link).netloc.lower() != base_netloc:
+            continue
+        if ln in document_recorded_norm:
+            continue
+        document_recorded_norm.add(ln)
+        item_type = str(doc.get("item_type") or "file")
+        ext = str(doc.get("extension") or "")
+        row = fetch_discovered_document(link, item_type, ext)
+        row["nodeId"] = _new_node_id()
+        pages.append(row)
+
+
+def _process_discovered_documents_crawl_depth(
+    *,
+    parent_id: str,
+    document_links: list[dict[str, Any]],
+    base_netloc: str,
+    url_to_node_id: dict[str, str],
+    document_recorded_norm: set[str],
+    pages: list[dict[str, Any]],
+    push_edge: Callable[[str, str], None],
+    max_pages: Optional[int],
+) -> None:
+    """Create graph edges to file nodes and fetch metadata (PDF text when possible)."""
+    for doc in document_links:
+        if max_pages is not None and len(pages) >= max_pages:
+            break
+        link = (doc.get("url") or "").strip()
+        if not link:
+            continue
+        ln = normalize_url(link)
+        if not ln:
+            continue
+        if urlparse(link).netloc.lower() != base_netloc:
+            continue
+        if ln not in url_to_node_id:
+            url_to_node_id[ln] = _new_node_id()
+        child_id = url_to_node_id[ln]
+        push_edge(parent_id, child_id)
+        if ln in document_recorded_norm:
+            continue
+        document_recorded_norm.add(ln)
+        item_type = str(doc.get("item_type") or "file")
+        ext = str(doc.get("extension") or "")
+        row = fetch_discovered_document(link, item_type, ext)
+        row["nodeId"] = child_id
+        pages.append(row)
 
 
 def crawl_site(start_url: str, max_pages: Optional[int] = None) -> dict[str, Any]:
@@ -505,6 +608,7 @@ def crawl_site(start_url: str, max_pages: Optional[int] = None) -> dict[str, Any
     queue: deque[str] = deque([start_url])
     visited_norm: set[str] = set()
     queued_norm: set[str] = {start_norm}
+    document_recorded_norm: set[str] = set()
     pages: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     fetched = 0
@@ -527,9 +631,22 @@ def crawl_site(start_url: str, max_pages: Optional[int] = None) -> dict[str, Any
             continue
 
         fetched += 1
-        pages.append(data)
+        doc_links: list[dict[str, Any]] = list(data.get("document_links") or [])
+        page_row = dict(data)
+        page_row["nodeId"] = _new_node_id()
+        page_row.setdefault("item_type", "page")
+        page_row.pop("document_links", None)
+        pages.append(page_row)
 
-        for link in data.get("links") or []:
+        _append_documents_crawl_site(
+            doc_links,
+            base_netloc,
+            document_recorded_norm,
+            pages,
+            max_pages,
+        )
+
+        for link in page_row.get("links") or []:
             ln = normalize_url(link)
             if not ln:
                 continue
@@ -548,10 +665,6 @@ def crawl_site(start_url: str, max_pages: Optional[int] = None) -> dict[str, Any
         "discovered_in_queue": len(queued_norm),
         "visited": len(visited_norm),
     }
-
-
-def _new_node_id() -> str:
-    return str(uuid.uuid4())
 
 
 # Cap list sizes in crawl_stats (samples for UI / debugging).
@@ -627,6 +740,7 @@ def crawl_site_depth(
     queue: deque[tuple[str, int]] = deque([(start_url, 0)])
     queued_norm: set[str] = {start_norm}
     visited_norm: set[str] = set()
+    document_recorded_norm: set[str] = set()
     url_to_node_id: dict[str, str] = {start_norm: _new_node_id()}
 
     # --- Page results (unchanged API for frontend) ---
@@ -703,6 +817,21 @@ def crawl_site_depth(
                 "url": current,
                 "title": "(fetch failed)",
                 "category": "home" if norm == start_norm else "crawled-page",
+                "item_type": "page",
+                "mime_type": None,
+                "extension": "",
+                "extracted_text": None,
+                "pdf_page_count": None,
+                "pdf_title": None,
+                "pdf_preview_snippet": None,
+                "docx_title": None,
+                "docx_preview_snippet": None,
+                "docx_paragraph_count": None,
+                "epub_title": None,
+                "epub_preview_snippet": None,
+                "epub_chapter_count": None,
+                "file_size": None,
+                "file_metadata": None,
                 "paragraph_count": 0,
                 "paragraphs": [],
                 "preview": [],
@@ -721,14 +850,28 @@ def crawl_site_depth(
             continue
 
         page_url = data.get("url") or current
+        doc_links: list[dict[str, Any]] = list(data.get("document_links") or [])
         row = {
             **data,
             "url": page_url,
             "nodeId": parent_id,
             "category": "home" if norm == start_norm else "crawled-page",
+            "item_type": data.get("item_type") or "page",
         }
+        row.pop("document_links", None)
         pages.append(row)
         merge_external_from_page(row)
+
+        _process_discovered_documents_crawl_depth(
+            parent_id=parent_id,
+            document_links=doc_links,
+            base_netloc=base_netloc,
+            url_to_node_id=url_to_node_id,
+            document_recorded_norm=document_recorded_norm,
+            pages=pages,
+            push_edge=push_edge,
+            max_pages=max_pages,
+        )
 
         if depth + 1 >= crawl_depth:
             depth_skipped_link_count += len(data.get("links") or [])

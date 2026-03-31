@@ -1,2 +1,4 @@
 # Local sitemap JSON snapshots (dev data dir; see backend/data_paths.py)
 backend/data/sitemaps/*.json
+# Playwright full-page captures (POST /api/screenshot)
+backend/data/screenshots/*.png

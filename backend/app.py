@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 
 from flask import Flask, Response, after_this_request, jsonify, request, send_file, stream_with_context
 from flask_cors import CORS
-from data_paths import get_sitemap_directory, iter_sitemap_json_files, resolve_sitemap_file
+from data_paths import get_screenshots_directory, get_sitemap_directory, iter_sitemap_json_files, resolve_sitemap_file
+from page_screenshot import PageScreenshotError, PlaywrightMissingError, capture_page_screenshot_png
 from scraper import crawl_site_depth, scrape_page
 from media_zip import create_media_zip, fetch_url_for_download
 import csv
@@ -485,6 +486,79 @@ def load_sitemap():
         return jsonify({"error": "invalid sitemap format"}), 400
 
     return jsonify(data)
+
+
+def _is_safe_screenshot_basename(name: str) -> bool:
+    """Only allow simple .png names under the screenshots folder."""
+    if not name or not isinstance(name, str):
+        return False
+    name = name.strip()
+    if not name.endswith(".png"):
+        return False
+    if name != os.path.basename(name):
+        return False
+    if ".." in name or "/" in name or "\\" in name:
+        return False
+    return bool(re.match(r"^[a-zA-Z0-9_.-]+\.png$", name))
+
+
+@app.route("/api/screenshot", methods=["POST"])
+def api_screenshot_capture():
+    """
+    Capture a full-page PNG of a remote URL using headless Chromium (Playwright).
+
+    JSON body: { "url": "https://..." }
+    Returns: { "ok": true, "filename": "...", "imageUrl": "/api/screenshots/..." }
+    """
+    data = request.get_json() or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+    if not url.startswith(("http://", "https://")):
+        return jsonify({"error": "url must be http(s)"}), 400
+    try:
+        path = capture_page_screenshot_png(url)
+    except PlaywrightMissingError:
+        return (
+            jsonify(
+                {
+                    "error": "playwright_missing",
+                    "message": "Playwright is not installed",
+                }
+            ),
+            503,
+        )
+    except PageScreenshotError as e:
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    filename = path.name
+    return jsonify(
+        {
+            "ok": True,
+            "filename": filename,
+            "imageUrl": f"/api/screenshots/{filename}",
+        }
+    )
+
+
+@app.route("/api/screenshots/<filename>", methods=["GET"])
+def api_screenshot_file(filename: str):
+    """Serve a PNG saved by POST /api/screenshot."""
+    if not _is_safe_screenshot_basename(filename):
+        return jsonify({"error": "invalid filename"}), 400
+    root = get_screenshots_directory()
+    path = root / filename
+    try:
+        if not path.is_file():
+            return jsonify({"error": "not found"}), 404
+        if path.resolve().parent != root.resolve():
+            return jsonify({"error": "invalid path"}), 400
+    except OSError:
+        return jsonify({"error": "not found"}), 404
+
+    return send_file(path, mimetype="image/png", max_age=0)
 
 
 if __name__ == "__main__":

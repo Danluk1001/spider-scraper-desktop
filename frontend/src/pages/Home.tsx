@@ -1,6 +1,5 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import axios from "axios";
-import { toPng } from "html-to-image";
 import "../home.css";
 import { SitemapGraphView } from "../components/SitemapGraphView";
 
@@ -38,11 +37,42 @@ type SitemapEdge = {
 /** HTTP health from crawl / probe (matches backend `status_label`). */
 type PageStatusLabel = "ok" | "redirect" | "broken" | "timeout_error";
 
+/** Crawl item classification (matches backend `link_classification` / `item_type`). */
+export type ItemType = "page" | "pdf" | "docx" | "doc" | "epub" | "file";
+
+export type FileMetadata = {
+  size_bytes?: number;
+  extraction_error?: string;
+  fetch_error?: string;
+};
+
 type ScrapedPage = {
   nodeId: NodeId;
   title: string;
   category: string;
   url: string;
+  /** page | pdf | docx | doc | epub | file — default page when omitted (legacy). */
+  item_type?: ItemType;
+  mime_type?: string | null;
+  extension?: string | null;
+  extracted_text?: string | null;
+  /** PDF: number of pages from pypdf (when extraction succeeded). */
+  pdf_page_count?: number | null;
+  /** PDF: document info title from file metadata (may differ from ``title``). */
+  pdf_title?: string | null;
+  /** PDF: short preview of extracted text (server-truncated). */
+  pdf_preview_snippet?: string | null;
+  /** DOCX: title from document core properties. */
+  docx_title?: string | null;
+  docx_preview_snippet?: string | null;
+  docx_paragraph_count?: number | null;
+  /** EPUB: DC title and spine-style document count. */
+  epub_title?: string | null;
+  epub_preview_snippet?: string | null;
+  epub_chapter_count?: number | null;
+  /** Bytes downloaded for this document (PDF and other files). */
+  file_size?: number | null;
+  file_metadata?: FileMetadata | null;
   paragraph_count: number;
   preview: string[];
   /** Response status when known (0 = unknown after probe failure). */
@@ -91,6 +121,528 @@ function statusLabelDisplay(v: PageStatusLabel | undefined): string {
   if (!v) return "—";
   if (v === "timeout_error") return "timeout / error";
   return v;
+}
+
+/** Left table filters — derived from ``pages``; original array is never mutated. */
+export type TableTypeFilter = "all" | "page" | "pdf" | "docx" | "epub" | "broken";
+export type TableMediaFilter = "any" | "images" | "videos";
+export type TableHttpFilter = "any" | "ok" | "redirect" | "broken";
+
+export type TableFilterState = {
+  search: string;
+  typeFilter: TableTypeFilter;
+  mediaFilter: TableMediaFilter;
+  httpFilter: TableHttpFilter;
+};
+
+function isBrokenTableRow(p: ScrapedPage): boolean {
+  const code = p.http_status ?? 0;
+  const sl = p.status_label;
+  if (sl === "broken" || sl === "timeout_error") return true;
+  if (code > 0 && code >= 400) return true;
+  return false;
+}
+
+function matchesHttpTableFilter(p: ScrapedPage, h: TableHttpFilter): boolean {
+  if (h === "any") return true;
+  const sl = p.status_label;
+  const code = p.http_status ?? 0;
+  if (h === "ok") {
+    if (sl === "ok") return true;
+    if (code >= 200 && code < 300) return true;
+    return false;
+  }
+  if (h === "redirect") return sl === "redirect";
+  if (h === "broken") return isBrokenTableRow(p);
+  return true;
+}
+
+/**
+ * Returns a subset of ``pages`` for the left results table. Does not mutate ``pages``.
+ */
+export function filterScrapedPagesForTable(
+  pages: ScrapedPage[],
+  f: TableFilterState,
+): ScrapedPage[] {
+  const q = f.search.trim().toLowerCase();
+  return pages.filter((p) => {
+    if (q) {
+      const haystack = `${p.title}\n${p.url}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+
+    const it = (p.item_type ?? "page").toLowerCase();
+    switch (f.typeFilter) {
+      case "page":
+        if (it !== "page") return false;
+        break;
+      case "pdf":
+        if (it !== "pdf") return false;
+        break;
+      case "docx":
+        if (it !== "docx") return false;
+        break;
+      case "epub":
+        if (it !== "epub") return false;
+        break;
+      case "broken":
+        if (!isBrokenTableRow(p)) return false;
+        break;
+      default:
+        break;
+    }
+
+    if (f.mediaFilter === "images" && (p.images?.length ?? 0) === 0) return false;
+    if (f.mediaFilter === "videos" && (p.videos?.length ?? 0) === 0) return false;
+
+    if (!matchesHttpTableFilter(p, f.httpFilter)) return false;
+
+    return true;
+  });
+}
+
+function parseItemType(v: unknown): ItemType {
+  if (v === "page" || v === "pdf" || v === "docx" || v === "doc" || v === "epub" || v === "file") {
+    return v;
+  }
+  return "page";
+}
+
+function parseOptionalPositiveInt(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v !== "number" || Number.isNaN(v)) return null;
+  return v >= 0 ? Math.floor(v) : null;
+}
+
+function formatFileSize(bytes: number | null | undefined): string {
+  if (bytes == null || Number.isNaN(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+function ItemTypeIcon({ type }: { type: ItemType }) {
+  const common = { width: 14, height: 14, flexShrink: 0 } as const;
+  switch (type) {
+    case "pdf":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden style={common}>
+          <path
+            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="#fee2e2"
+          />
+          <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          <text x="7" y="17" fontSize="7" fontWeight="700" fill="#b91c1c">
+            PDF
+          </text>
+        </svg>
+      );
+    case "docx":
+    case "doc":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden style={common}>
+          <rect x="4" y="2" width="16" height="20" rx="2" fill="#dbeafe" stroke="#2563eb" strokeWidth="1.25" />
+          <text x="6" y="15" fontSize="8" fontWeight="800" fill="#1d4ed8">
+            W
+          </text>
+        </svg>
+      );
+    case "epub":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden style={common}>
+          <path
+            d="M4 19V5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"
+            fill="#ede9fe"
+            stroke="#7c3aed"
+            strokeWidth="1.25"
+          />
+          <path d="M14 3v5h5" stroke="#7c3aed" strokeWidth="1.25" />
+        </svg>
+      );
+    case "file":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden style={common}>
+          <path
+            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+            fill="#f1f5f9"
+            stroke="#64748b"
+            strokeWidth="1.25"
+          />
+          <path d="M14 2v6h6" stroke="#64748b" strokeWidth="1.25" />
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden style={common}>
+          <circle cx="12" cy="12" r="9" fill="#e0f2fe" stroke="#0369a1" strokeWidth="1.25" />
+        </svg>
+      );
+  }
+}
+
+/** Preview box shared by PDF / DOCX / EPUB detail strips. */
+function ExtractPreviewBox({
+  text,
+  borderColor,
+  labelColor,
+}: {
+  text: string;
+  borderColor: string;
+  labelColor: string;
+}) {
+  return (
+    <div style={{ marginBottom: "10px" }}>
+      <div style={{ fontWeight: 600, marginBottom: "4px", color: labelColor }}>Preview</div>
+      <div
+        style={{
+          maxHeight: "120px",
+          overflow: "auto",
+          padding: "8px 10px",
+          borderRadius: "6px",
+          background: "#ffffffcc",
+          border: `1px solid ${borderColor}`,
+          lineHeight: 1.45,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
+/** Detail strip for PDF, DOCX, EPUB, and generic file rows. */
+function DocumentAssetDetailPanel({ page }: { page: ScrapedPage }) {
+  const t = page.item_type ?? "page";
+  if (t === "page") return null;
+
+  const openAsset = () => {
+    window.open(page.url, "_blank", "noopener,noreferrer");
+  };
+
+  const err = page.file_metadata?.extraction_error;
+  const downloadLink = (
+    <a
+      href={page.url}
+      download
+      style={{
+        padding: "8px 14px",
+        borderRadius: "8px",
+        border: "1px solid #cbd5e1",
+        background: "#ffffff",
+        color: "#334155",
+        fontSize: "13px",
+        fontWeight: 600,
+        textDecoration: "none",
+        display: "inline-block",
+      }}
+    >
+      Download (save as)
+    </a>
+  );
+
+  if (t === "pdf") {
+    return (
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid #fecaca",
+          background: "linear-gradient(180deg, #fff7ed 0%, #fffbeb 100%)",
+          fontSize: "13px",
+          color: "#431407",
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: "8px", fontSize: "14px", color: "#9a3412" }}>
+          PDF document
+        </div>
+        <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+          <div>
+            <strong>Pages:</strong>{" "}
+            {page.pdf_page_count != null && page.pdf_page_count > 0 ? page.pdf_page_count : "—"}
+          </div>
+          <div>
+            <strong>File size:</strong> {formatFileSize(page.file_size ?? undefined)}
+          </div>
+          {page.pdf_title ? (
+            <div>
+              <strong>PDF title:</strong> {page.pdf_title}
+            </div>
+          ) : null}
+          <div>
+            <strong>MIME:</strong> {page.mime_type ?? "—"}
+          </div>
+          {page.extension ? (
+            <div>
+              <strong>Extension:</strong> {page.extension}
+            </div>
+          ) : null}
+        </div>
+        {page.pdf_preview_snippet ? (
+          <ExtractPreviewBox text={page.pdf_preview_snippet} borderColor="#fed7aa" labelColor="#9a3412" />
+        ) : null}
+        {err ? (
+          <div style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "12px" }}>Extraction note: {err}</div>
+        ) : null}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={openAsset}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #ea580c",
+              background: "#fff7ed",
+              color: "#9a3412",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Open in new tab
+          </button>
+          {downloadLink}
+        </div>
+      </div>
+    );
+  }
+
+  if (t === "docx") {
+    return (
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid #93c5fd",
+          background: "linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)",
+          fontSize: "13px",
+          color: "#1e3a5f",
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: "8px", fontSize: "14px", color: "#1d4ed8" }}>
+          Word document (DOCX)
+        </div>
+        <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+          <div>
+            <strong>Paragraphs (non-empty):</strong>{" "}
+            {page.docx_paragraph_count != null && page.docx_paragraph_count > 0
+              ? page.docx_paragraph_count
+              : "—"}
+          </div>
+          <div>
+            <strong>File size:</strong> {formatFileSize(page.file_size ?? undefined)}
+          </div>
+          {page.docx_title ? (
+            <div>
+              <strong>Document title:</strong> {page.docx_title}
+            </div>
+          ) : null}
+          <div>
+            <strong>MIME:</strong> {page.mime_type ?? "—"}
+          </div>
+          {page.extension ? (
+            <div>
+              <strong>Extension:</strong> {page.extension}
+            </div>
+          ) : null}
+        </div>
+        {page.docx_preview_snippet ? (
+          <ExtractPreviewBox text={page.docx_preview_snippet} borderColor="#93c5fd" labelColor="#1d4ed8" />
+        ) : null}
+        {err ? (
+          <div style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "12px" }}>Extraction note: {err}</div>
+        ) : null}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={openAsset}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #2563eb",
+              background: "#ffffff",
+              color: "#1d4ed8",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Open in new tab
+          </button>
+          {downloadLink}
+        </div>
+      </div>
+    );
+  }
+
+  if (t === "epub") {
+    return (
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid #c4b5fd",
+          background: "linear-gradient(180deg, #f5f3ff 0%, #faf5ff 100%)",
+          fontSize: "13px",
+          color: "#3b0764",
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: "8px", fontSize: "14px", color: "#6d28d9" }}>
+          EPUB e-book
+        </div>
+        <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+          <div>
+            <strong>HTML documents (spine):</strong>{" "}
+            {page.epub_chapter_count != null && page.epub_chapter_count > 0 ? page.epub_chapter_count : "—"}
+          </div>
+          <div>
+            <strong>File size:</strong> {formatFileSize(page.file_size ?? undefined)}
+          </div>
+          {page.epub_title ? (
+            <div>
+              <strong>Title (DC):</strong> {page.epub_title}
+            </div>
+          ) : null}
+          <div>
+            <strong>MIME:</strong> {page.mime_type ?? "—"}
+          </div>
+          {page.extension ? (
+            <div>
+              <strong>Extension:</strong> {page.extension}
+            </div>
+          ) : null}
+        </div>
+        {page.epub_preview_snippet ? (
+          <ExtractPreviewBox text={page.epub_preview_snippet} borderColor="#c4b5fd" labelColor="#6d28d9" />
+        ) : null}
+        {err ? (
+          <div style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "12px" }}>Extraction note: {err}</div>
+        ) : null}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={openAsset}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #7c3aed",
+              background: "#ffffff",
+              color: "#5b21b6",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Open in new tab
+          </button>
+          {downloadLink}
+        </div>
+      </div>
+    );
+  }
+
+  if (t === "file" || t === "doc") {
+    return (
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid #e2e8f0",
+          background: "#f8fafc",
+          fontSize: "13px",
+          color: "#334155",
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: "8px", fontSize: "14px", color: "#475569" }}>
+          {t === "doc" ? "Word (.doc) — binary format; extract in a desktop app." : "Downloadable file"}
+        </div>
+        <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+          <div>
+            <strong>File size:</strong> {formatFileSize(page.file_size ?? undefined)}
+          </div>
+          <div>
+            <strong>MIME:</strong> {page.mime_type ?? "—"}
+          </div>
+          {page.extension ? (
+            <div>
+              <strong>Extension:</strong> {page.extension}
+            </div>
+          ) : null}
+        </div>
+        {err ? (
+          <div style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "12px" }}>Note: {err}</div>
+        ) : null}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={openAsset}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #64748b",
+              background: "#ffffff",
+              color: "#334155",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Open in new tab
+          </button>
+          {downloadLink}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function ItemTypeBadge({ type }: { type: ItemType }) {
+  const palette: Record<ItemType, { bg: string; fg: string; border: string }> = {
+    page: { bg: "#e0f2fe", fg: "#0369a1", border: "#7dd3fc" },
+    pdf: { bg: "#fee2e2", fg: "#b91c1c", border: "#fecaca" },
+    docx: { bg: "#dbeafe", fg: "#1d4ed8", border: "#93c5fd" },
+    doc: { bg: "#dbeafe", fg: "#1e40af", border: "#93c5fd" },
+    epub: { bg: "#ede9fe", fg: "#5b21b6", border: "#c4b5fd" },
+    file: { bg: "#f1f5f9", fg: "#475569", border: "#cbd5e1" },
+  };
+  const c = palette[type];
+  const label =
+    type === "page"
+      ? "PAGE"
+      : type === "pdf"
+        ? "PDF"
+        : type === "docx"
+          ? "DOCX"
+          : type === "doc"
+            ? "DOC"
+            : type === "epub"
+              ? "EPUB"
+              : "FILE";
+  return (
+    <span
+      title={`Item type: ${type}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "2px 8px",
+        borderRadius: "6px",
+        fontSize: "10px",
+        fontWeight: 700,
+        letterSpacing: "0.02em",
+        border: `1px solid ${c.border}`,
+        background: c.bg,
+        color: c.fg,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <ItemTypeIcon type={type} />
+      {label}
+    </span>
+  );
 }
 
 function StatusBadge({
@@ -433,6 +985,187 @@ function CodePreviewPanel({
           {has ? content : emptyMessage}
         </pre>
       </div>
+    </div>
+  );
+}
+
+/** Screenshot tab errors: missing Playwright vs other (navigation, timeout, etc.). */
+type ScreenshotErrorState =
+  | null
+  | { kind: "playwright_missing" }
+  | { kind: "generic"; message: string };
+
+function parseScreenshotApiError(data: unknown): Exclude<ScreenshotErrorState, null> {
+  if (data && typeof data === "object" && "error" in data) {
+    const d = data as { error?: unknown; message?: unknown };
+    if (d.error === "playwright_missing") {
+      return { kind: "playwright_missing" };
+    }
+    if (typeof d.error === "string" && d.error.length > 0) {
+      const msg =
+        typeof d.message === "string" && d.message.length > 0
+          ? d.message
+          : d.error;
+      return { kind: "generic", message: msg };
+    }
+  }
+  return { kind: "generic", message: "Unexpected response from server." };
+}
+
+/** Live page screenshot from POST /api/screenshot (Playwright on the server). */
+function PageScreenshotPanel({
+  pageUrl,
+  busy,
+  previewUrl,
+  error,
+  onCapture,
+  onRetry,
+}: {
+  pageUrl: string | undefined;
+  busy: boolean;
+  previewUrl: string | null;
+  error: ScreenshotErrorState;
+  onCapture: () => void;
+  onRetry: () => void;
+}) {
+  if (!pageUrl?.trim()) {
+    return (
+      <div style={{ padding: "16px", color: "#64748b", fontSize: "14px" }}>
+        Select a row in the results list to choose a page for screenshot.
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        padding: "16px",
+        boxSizing: "border-box",
+        gap: "12px",
+      }}
+    >
+      <div style={{ fontSize: "13px", color: "#334155" }}>
+        <strong>URL:</strong>{" "}
+        <span style={{ wordBreak: "break-all" }}>{pageUrl}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onCapture()}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "8px",
+            border: "1px solid #2563eb",
+            background: busy ? "#93c5fd" : "#2563eb",
+            color: "#fff",
+            fontSize: "13px",
+            fontWeight: 600,
+            cursor: busy ? "wait" : "pointer",
+          }}
+        >
+          {busy ? "Capturing…" : "Capture full-page screenshot"}
+        </button>
+        {error ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onRetry()}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #64748b",
+              background: busy ? "#e2e8f0" : "#f1f5f9",
+              color: "#334155",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: busy ? "wait" : "pointer",
+            }}
+          >
+            Retry
+          </button>
+        ) : null}
+        <span style={{ fontSize: "12px", color: "#64748b" }}>
+          Opens this URL in headless Chromium on the server (Playwright).
+        </span>
+      </div>
+      {error?.kind === "playwright_missing" ? (
+        <div
+          style={{
+            padding: "14px 16px",
+            borderRadius: "8px",
+            border: "1px solid #fcd34d",
+            background: "#fffbeb",
+            color: "#374151",
+            fontSize: "13px",
+            lineHeight: 1.55,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: "8px", color: "#92400e" }}>
+            Playwright is not installed on the server
+          </div>
+          <p style={{ margin: "0 0 10px 0" }}>
+            Install the Python package and Chromium for the backend, then click Retry (or Capture
+            again).
+          </p>
+          <ol style={{ margin: "0 0 10px 1.2em", padding: 0 }}>
+            <li style={{ marginBottom: "6px" }}>
+              <code
+                style={{
+                  display: "inline-block",
+                  background: "#fef3c7",
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                }}
+              >
+                pip install playwright
+              </code>
+            </li>
+            <li>
+              <code
+                style={{
+                  display: "inline-block",
+                  background: "#fef3c7",
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                }}
+              >
+                python -m playwright install chromium
+              </code>
+            </li>
+          </ol>
+          <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
+            Run these in your backend environment, restart the Flask server, then try again.
+          </p>
+        </div>
+      ) : error?.kind === "generic" ? (
+        <div style={{ color: "#b91c1c", fontSize: "13px", fontWeight: 600 }}>{error.message}</div>
+      ) : null}
+      {previewUrl ? (
+        <div
+          style={{
+            flex: 1,
+            minHeight: 200,
+            overflow: "auto",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            background: "#f8fafc",
+          }}
+        >
+          <img
+            src={previewUrl}
+            alt={`Screenshot of ${pageUrl}`}
+            style={{ width: "100%", height: "auto", display: "block" }}
+          />
+        </div>
+      ) : !busy ? (
+        <div style={{ color: "#94a3b8", fontSize: "13px" }}>No screenshot yet. Click Capture.</div>
+      ) : null}
     </div>
   );
 }
@@ -799,19 +1532,6 @@ function apiUrl(path: string): string {
   return API_BASE ? `${API_BASE}${p}` : p;
 }
 
-/** Download filename for workspace PNG (host + timestamp). */
-function screenshotFilename(rootUrl: string, pageUrl: string | undefined): string {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-  try {
-    const raw = (pageUrl || rootUrl).trim() || "https://local";
-    const u = new URL(raw);
-    const host = u.hostname.replace(/[^a-z0-9.-]+/gi, "_").slice(0, 80) || "page";
-    return `spider-scraper-${host}-${stamp}.png`;
-  } catch {
-    return `spider-scraper-${stamp}.png`;
-  }
-}
-
 /** POST JSON → file download (CSV/JSON). Parses errors from JSON error responses. */
 async function postBlobDownload(
   path: string,
@@ -1076,11 +1796,67 @@ function backendPageToScrapedPage(raw: Record<string, unknown>, index: number): 
   const rawHtml = raw.raw_html;
   const rawCss = raw.raw_css;
   const rawJs = raw.raw_js;
+  const item_type = parseItemType(raw.item_type);
+  const extRaw = raw.extension;
+  const extension =
+    typeof extRaw === "string" && extRaw.length > 0 ? extRaw : undefined;
+  const extracted =
+    typeof raw.extracted_text === "string" ? raw.extracted_text : undefined;
+  const fm = raw.file_metadata;
+  const file_metadata =
+    fm && typeof fm === "object" && !Array.isArray(fm)
+      ? (fm as FileMetadata)
+      : undefined;
+  const pdf_page_count = parseOptionalPositiveInt(raw.pdf_page_count);
+  const pdf_title =
+    typeof raw.pdf_title === "string" && raw.pdf_title.trim().length > 0
+      ? raw.pdf_title.trim()
+      : null;
+  const pdf_preview_snippet =
+    typeof raw.pdf_preview_snippet === "string" && raw.pdf_preview_snippet.trim().length > 0
+      ? raw.pdf_preview_snippet
+      : null;
+  const docx_title =
+    typeof raw.docx_title === "string" && raw.docx_title.trim().length > 0
+      ? raw.docx_title.trim()
+      : null;
+  const docx_preview_snippet =
+    typeof raw.docx_preview_snippet === "string" && raw.docx_preview_snippet.trim().length > 0
+      ? raw.docx_preview_snippet
+      : null;
+  const docx_paragraph_count = parseOptionalPositiveInt(raw.docx_paragraph_count);
+  const epub_title =
+    typeof raw.epub_title === "string" && raw.epub_title.trim().length > 0
+      ? raw.epub_title.trim()
+      : null;
+  const epub_preview_snippet =
+    typeof raw.epub_preview_snippet === "string" && raw.epub_preview_snippet.trim().length > 0
+      ? raw.epub_preview_snippet
+      : null;
+  const epub_chapter_count = parseOptionalPositiveInt(raw.epub_chapter_count);
+  const fsRaw = raw.file_size;
+  const file_size =
+    typeof fsRaw === "number" && !Number.isNaN(fsRaw) && fsRaw >= 0 ? fsRaw : null;
   return {
     nodeId,
     title: String(raw.title ?? pageUrl),
     category,
     url: pageUrl,
+    item_type,
+    mime_type: parseOptionalMetaString(raw.mime_type) ?? null,
+    extension,
+    extracted_text: extracted,
+    pdf_page_count: pdf_page_count ?? null,
+    pdf_title,
+    pdf_preview_snippet,
+    docx_title,
+    docx_preview_snippet,
+    docx_paragraph_count: docx_paragraph_count ?? null,
+    epub_title,
+    epub_preview_snippet,
+    epub_chapter_count: epub_chapter_count ?? null,
+    file_size,
+    file_metadata,
     paragraph_count: Number(raw.paragraph_count ?? text.length),
     preview: text,
     http_status,
@@ -1535,6 +2311,32 @@ export default function Home() {
   const [crawlDepth, setCrawlDepth] = useState<CrawlDepth>(2);
   /** Filled during NDJSON crawl stream (current/total + URL being fetched). */
   const [crawlProgress, setCrawlProgress] = useState<CrawlProgressState | null>(null);
+  /** Server-side Playwright capture for the Screenshot tab. */
+  const [screenshotBusy, setScreenshotBusy] = useState(false);
+  const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState<string | null>(null);
+  const [screenshotError, setScreenshotError] = useState<ScreenshotErrorState>(null);
+
+  /** Left table: search / filters apply only to the visible list (``pages`` is unchanged). */
+  const [tableSearchQuery, setTableSearchQuery] = useState("");
+  const [tableTypeFilter, setTableTypeFilter] = useState<TableTypeFilter>("all");
+  const [tableMediaFilter, setTableMediaFilter] = useState<TableMediaFilter>("any");
+  const [tableHttpFilter, setTableHttpFilter] = useState<TableHttpFilter>("any");
+
+  const filteredTablePages = useMemo(
+    () =>
+      filterScrapedPagesForTable(pages, {
+        search: tableSearchQuery,
+        typeFilter: tableTypeFilter,
+        mediaFilter: tableMediaFilter,
+        httpFilter: tableHttpFilter,
+      }),
+    [pages, tableSearchQuery, tableTypeFilter, tableMediaFilter, tableHttpFilter],
+  );
+
+  useEffect(() => {
+    setScreenshotPreviewUrl(null);
+    setScreenshotError(null);
+  }, [selectedPage?.nodeId]);
 
   /** Pages for the graph (hide aggregate rows so the map matches crawled URLs). */
   const graphPages = useMemo(
@@ -1562,6 +2364,7 @@ export default function Home() {
     "Regex Search",
     "Images",
     "Videos",
+    "Screenshot",
     "Sitemap Graph",
   ];
 
@@ -1954,6 +2757,11 @@ export default function Home() {
       return;
     }
 
+    if (page.item_type && page.item_type !== "page") {
+      setSelectedPage(page);
+      return;
+    }
+
     if (page.category !== "linked-page") {
       setSelectedPage(page);
       return;
@@ -2023,36 +2831,48 @@ export default function Home() {
     activeTab === "HTML" ||
     activeTab === "CSS" ||
     activeTab === "JavaScript" ||
-    activeTab === "Regex Search";
+    activeTab === "Regex Search" ||
+    activeTab === "Screenshot";
 
-  const scraperMainRef = useRef<HTMLDivElement>(null);
-  const screenshotLockRef = useRef(false);
-  const [screenshotBusy, setScreenshotBusy] = useState(false);
-
-  const handleScreenshotWorkspace = useCallback(async () => {
-    const el = scraperMainRef.current;
-    if (!el || screenshotLockRef.current) return;
-    screenshotLockRef.current = true;
+  const handlePageScreenshot = useCallback(async () => {
+    const url = selectedPage?.url?.trim();
+    if (!url) {
+      setScreenshotError({ kind: "generic", message: "No page selected." });
+      return;
+    }
     setScreenshotBusy(true);
+    setScreenshotError(null);
     try {
-      await new Promise((r) => requestAnimationFrame(r));
-      const dataUrl = await toPng(el, {
-        backgroundColor: "#ffffff",
-        pixelRatio: 2,
-        cacheBust: true,
+      const res = await axios.post<
+        | { ok: true; filename: string; imageUrl: string }
+        | { error: string; message?: string }
+      >(apiUrl("/api/screenshot"), { url }, {
+        timeout: 120_000,
+        headers: { "Content-Type": "application/json" },
       });
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = screenshotFilename(rootUrl, selectedPage?.url);
-      a.rel = "noopener";
-      a.click();
-    } catch (e) {
-      console.error("Screenshot failed:", e);
+      const d = res.data;
+      if ("error" in d && d.error) {
+        setScreenshotError(parseScreenshotApiError(d));
+        return;
+      }
+      if (!("ok" in d && d.ok && d.imageUrl)) {
+        setScreenshotError(parseScreenshotApiError(d));
+        return;
+      }
+      setScreenshotPreviewUrl(`${apiUrl(d.imageUrl)}?t=${Date.now()}`);
+    } catch (e: unknown) {
+      if (axios.isAxiosError(e)) {
+        const body = e.response?.data;
+        setScreenshotError(
+          body ? parseScreenshotApiError(body) : { kind: "generic", message: e.message },
+        );
+      } else {
+        setScreenshotError({ kind: "generic", message: String(e) });
+      }
     } finally {
-      screenshotLockRef.current = false;
       setScreenshotBusy(false);
     }
-  }, [rootUrl, selectedPage?.url]);
+  }, [selectedPage?.url]);
 
   return (
     <div className="scraper-app">
@@ -2260,12 +3080,150 @@ export default function Home() {
 
       </div>
 
-      <div className="scraper-main" ref={scraperMainRef}>
+      <div className="scraper-main">
         <div className="scraper-left">
           <div
             style={{
+              flexShrink: 0,
+              padding: "10px 12px",
+              borderBottom: "1px solid #cbd5e1",
+              background: "#f8fafc",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "8px 12px",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                Results
+              </span>
+              <span style={{ fontSize: "12px", color: "#64748b" }}>
+                Showing{" "}
+                <strong style={{ color: "#0f172a" }}>{filteredTablePages.length}</strong> of{" "}
+                {pages.length}
+              </span>
+            </div>
+            <input
+              type="search"
+              value={tableSearchQuery}
+              onChange={(e) => setTableSearchQuery(e.target.value)}
+              placeholder="Search title or URL…"
+              aria-label="Search results by title or URL"
+              style={{
+                width: "100%",
+                maxWidth: "100%",
+                boxSizing: "border-box",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                fontSize: "13px",
+                background: "#ffffff",
+              }}
+            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                gap: "8px",
+                width: "100%",
+              }}
+            >
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontWeight: 600, color: "#64748b" }}>
+                Type
+                <select
+                  value={tableTypeFilter}
+                  onChange={(e) => setTableTypeFilter(e.target.value as TableTypeFilter)}
+                  style={{
+                    padding: "6px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px",
+                    background: "#ffffff",
+                  }}
+                >
+                  <option value="all">All</option>
+                  <option value="page">Pages only</option>
+                  <option value="pdf">PDFs only</option>
+                  <option value="docx">DOCX only</option>
+                  <option value="epub">EPUB only</option>
+                  <option value="broken">Broken only</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontWeight: 600, color: "#64748b" }}>
+                Media
+                <select
+                  value={tableMediaFilter}
+                  onChange={(e) => setTableMediaFilter(e.target.value as TableMediaFilter)}
+                  style={{
+                    padding: "6px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px",
+                    background: "#ffffff",
+                  }}
+                >
+                  <option value="any">Any</option>
+                  <option value="images">Has images</option>
+                  <option value="videos">Has videos</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontWeight: 600, color: "#64748b" }}>
+                HTTP
+                <select
+                  value={tableHttpFilter}
+                  onChange={(e) => setTableHttpFilter(e.target.value as TableHttpFilter)}
+                  style={{
+                    padding: "6px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px",
+                    background: "#ffffff",
+                  }}
+                >
+                  <option value="any">Any</option>
+                  <option value="ok">200 OK</option>
+                  <option value="redirect">Redirect</option>
+                  <option value="broken">Broken</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setTableSearchQuery("");
+                  setTableTypeFilter("all");
+                  setTableMediaFilter("any");
+                  setTableHttpFilter("any");
+                }}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #cbd5e1",
+                  background: "#ffffff",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#475569",
+                  cursor: "pointer",
+                }}
+              >
+                Reset filters
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
               display: "grid",
-              gridTemplateColumns: "34% 12% 14% 38%",
+              gridTemplateColumns: "34% 11% 11% 14% 28%",
               padding: "10px 12px",
               background: "#f1f5f9",
               borderBottom: "1px solid #cbd5e1",
@@ -2275,6 +3233,7 @@ export default function Home() {
             }}
           >
             <div>Title</div>
+            <div>Type</div>
             <div>Category</div>
             <div>HTTP</div>
             <div>URL</div>
@@ -2291,8 +3250,33 @@ export default function Home() {
               <div style={{ padding: "16px", color: "#6b7280", fontSize: "14px" }}>
                 No pages scraped yet.
               </div>
+            ) : filteredTablePages.length === 0 ? (
+              <div style={{ padding: "16px", color: "#6b7280", fontSize: "14px" }}>
+                No rows match your search and filters. Try{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableSearchQuery("");
+                    setTableTypeFilter("all");
+                    setTableMediaFilter("any");
+                    setTableHttpFilter("any");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#2563eb",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    fontSize: "inherit",
+                    padding: 0,
+                  }}
+                >
+                  resetting filters
+                </button>
+                .
+              </div>
             ) : (
-              pages.map((page) => {
+              filteredTablePages.map((page) => {
                 const selected = selectedPage?.nodeId === page.nodeId;
                 return (
                   <div
@@ -2300,7 +3284,7 @@ export default function Home() {
                     onClick={() => scrapeLinkedPage(page)}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "34% 12% 14% 38%",
+                      gridTemplateColumns: "34% 11% 11% 14% 28%",
                       padding: "10px 12px",
                       borderBottom: "1px solid #e5e7eb",
                       cursor: "pointer",
@@ -2320,6 +3304,9 @@ export default function Home() {
                       }}
                     >
                       {page.title}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <ItemTypeBadge type={page.item_type ?? "page"} />
                     </div>
                     <div
                       title={page.category}
@@ -2364,6 +3351,8 @@ export default function Home() {
             {selectedPage?.title || "No page selected"}
           </div>
 
+          {selectedPage ? <DocumentAssetDetailPanel page={selectedPage} /> : null}
+
           <div
             style={{
               display: "flex",
@@ -2394,41 +3383,6 @@ export default function Home() {
                 {tab}
               </button>
             ))}
-            <button
-              type="button"
-              title="Save a PNG screenshot of the workspace (page list + detail panel)"
-              aria-label="Save workspace screenshot as PNG"
-              disabled={screenshotBusy}
-              onClick={() => void handleScreenshotWorkspace()}
-              style={{
-                marginLeft: "4px",
-                padding: "6px 8px",
-                borderRadius: "8px",
-                border: "1px solid #cbd5e1",
-                background: screenshotBusy ? "#e2e8f0" : "#ffffff",
-                color: "#334155",
-                cursor: screenshotBusy ? "wait" : "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                lineHeight: 1,
-              }}
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx="12" cy="13" r="4" />
-              </svg>
-            </button>
           </div>
 
           <div
@@ -2455,6 +3409,15 @@ export default function Home() {
                   if (p) setSelectedPage(p);
                 }}
               />
+            ) : activeTab === "Screenshot" ? (
+              <PageScreenshotPanel
+                pageUrl={selectedPage?.url}
+                busy={screenshotBusy}
+                previewUrl={screenshotPreviewUrl}
+                error={screenshotError}
+                onCapture={handlePageScreenshot}
+                onRetry={handlePageScreenshot}
+              />
             ) : !selectedPage ? (
               <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
             ) : activeTab === "Text View" ? (
@@ -2465,13 +3428,50 @@ export default function Home() {
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {`Title: ${selectedPage.title}
+                {selectedPage.item_type === "pdf"
+                  ? `Title: ${selectedPage.title}
+PDF title (metadata): ${selectedPage.pdf_title ?? "—"}
+Pages: ${selectedPage.pdf_page_count != null ? selectedPage.pdf_page_count : "—"}
+File size: ${formatFileSize(selectedPage.file_size ?? undefined)}
 Category: ${selectedPage.category}
-URL: ${selectedPage.url}
+Type: ${selectedPage.item_type ?? "page"}
+${selectedPage.mime_type ? `MIME: ${selectedPage.mime_type}\n` : ""}${selectedPage.extension ? `Extension: ${selectedPage.extension}\n` : ""}URL: ${selectedPage.url}
+HTTP: ${selectedPage.http_status != null && selectedPage.http_status > 0 ? selectedPage.http_status : "—"} (${statusLabelDisplay(selectedPage.status_label)})
+${selectedPage.file_metadata && Object.keys(selectedPage.file_metadata).length > 0 ? `File metadata: ${JSON.stringify(selectedPage.file_metadata)}\n` : ""}
+${selectedPage.pdf_preview_snippet ? `Preview snippet:\n${selectedPage.pdf_preview_snippet}\n\n` : ""}${selectedPage.extracted_text ? `Extracted text (full):\n${selectedPage.extracted_text}\n\n` : ""}Preview chunks:
+${selectedPage.preview.join("\n\n")}`
+                  : selectedPage.item_type === "docx"
+                    ? `Title: ${selectedPage.title}
+DOCX title (core): ${selectedPage.docx_title ?? "—"}
+Non-empty paragraphs: ${selectedPage.docx_paragraph_count != null ? selectedPage.docx_paragraph_count : "—"}
+File size: ${formatFileSize(selectedPage.file_size ?? undefined)}
+Category: ${selectedPage.category}
+Type: ${selectedPage.item_type ?? "page"}
+${selectedPage.mime_type ? `MIME: ${selectedPage.mime_type}\n` : ""}${selectedPage.extension ? `Extension: ${selectedPage.extension}\n` : ""}URL: ${selectedPage.url}
+HTTP: ${selectedPage.http_status != null && selectedPage.http_status > 0 ? selectedPage.http_status : "—"} (${statusLabelDisplay(selectedPage.status_label)})
+${selectedPage.file_metadata && Object.keys(selectedPage.file_metadata).length > 0 ? `File metadata: ${JSON.stringify(selectedPage.file_metadata)}\n` : ""}
+${selectedPage.docx_preview_snippet ? `Preview snippet:\n${selectedPage.docx_preview_snippet}\n\n` : ""}${selectedPage.extracted_text ? `Extracted text (full):\n${selectedPage.extracted_text}\n\n` : ""}Preview chunks:
+${selectedPage.preview.join("\n\n")}`
+                    : selectedPage.item_type === "epub"
+                      ? `Title: ${selectedPage.title}
+EPUB title (DC): ${selectedPage.epub_title ?? "—"}
+Spine HTML documents: ${selectedPage.epub_chapter_count != null ? selectedPage.epub_chapter_count : "—"}
+File size: ${formatFileSize(selectedPage.file_size ?? undefined)}
+Category: ${selectedPage.category}
+Type: ${selectedPage.item_type ?? "page"}
+${selectedPage.mime_type ? `MIME: ${selectedPage.mime_type}\n` : ""}${selectedPage.extension ? `Extension: ${selectedPage.extension}\n` : ""}URL: ${selectedPage.url}
+HTTP: ${selectedPage.http_status != null && selectedPage.http_status > 0 ? selectedPage.http_status : "—"} (${statusLabelDisplay(selectedPage.status_label)})
+${selectedPage.file_metadata && Object.keys(selectedPage.file_metadata).length > 0 ? `File metadata: ${JSON.stringify(selectedPage.file_metadata)}\n` : ""}
+${selectedPage.epub_preview_snippet ? `Preview snippet:\n${selectedPage.epub_preview_snippet}\n\n` : ""}${selectedPage.extracted_text ? `Extracted text (full):\n${selectedPage.extracted_text}\n\n` : ""}Preview chunks:
+${selectedPage.preview.join("\n\n")}`
+                  : `Title: ${selectedPage.title}
+Category: ${selectedPage.category}
+Type: ${selectedPage.item_type ?? "page"}
+${selectedPage.mime_type ? `MIME: ${selectedPage.mime_type}\n` : ""}${selectedPage.extension ? `Extension: ${selectedPage.extension}\n` : ""}URL: ${selectedPage.url}
 HTTP: ${selectedPage.http_status != null && selectedPage.http_status > 0 ? selectedPage.http_status : "—"} (${statusLabelDisplay(selectedPage.status_label)})
 Paragraph Count: ${selectedPage.paragraph_count}
-
-Preview:
+${selectedPage.file_metadata && Object.keys(selectedPage.file_metadata).length > 0 ? `File metadata: ${JSON.stringify(selectedPage.file_metadata)}\n` : ""}
+${selectedPage.extracted_text ? `Extracted text:\n${selectedPage.extracted_text}\n\n` : ""}Preview:
 ${selectedPage.preview.join("\n\n")}`}
               </pre>
             ) : activeTab === "Metadata" ? (
