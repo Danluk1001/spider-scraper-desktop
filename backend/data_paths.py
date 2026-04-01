@@ -66,7 +66,9 @@ def get_frontend_dist_directory() -> Path | None:
     override = os.environ.get(_ENV_FRONTEND_DIST)
     if override:
         p = Path(override).expanduser().resolve()
-        return p if p.is_dir() else None
+        if p.is_dir():
+            return p
+        # Invalid override (missing dir, typo): fall through to defaults below.
 
     if _is_frozen():
         meipass = getattr(sys, "_MEIPASS", None)

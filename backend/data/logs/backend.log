@@ -50,3 +50,294 @@
 2026-03-31 13:41:21,074 INFO werkzeug:  * Restarting with stat
 2026-03-31 13:41:21,674 WARNING werkzeug:  * Debugger is active!
 2026-03-31 13:41:21,680 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 13:49:32,803 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:49:32] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 13:49:51,412 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:49:51] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:49:51,419 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:49:51] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:51:11,954 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:51:11] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 13:52:55,137 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:52:55] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 13:52:56,828 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 13:52:56,829 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 13:52:57,504 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:52:57] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 13:52:57,648 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:52:57] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 13:54:17,422 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:54:17] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:54:17,428 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:54:17] "GET /api/screenshots HTTP/1.1" 200 -
+2026-03-31 13:57:07,820 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:57:07] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 13:57:25,079 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:57:25] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 13:57:50,686 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 13:57:50] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:01:21,027 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:01:21] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:02:31,846 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:02:31] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:02:58,216 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:02:58] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:02:59,328 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:02:59,329 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:02:59,643 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:02:59] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:02:59,676 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:02:59] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:04:40,247 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:04:40,288 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:04:40,898 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:04:40,904 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:05:35,318 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:05:35] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:05:36,691 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:05:36] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:05:36,724 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:05:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:07:43,650 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:07:43,728 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:07:44,571 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:07:44,577 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:07:45,685 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:07:45,733 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:07:46,526 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:07:46,535 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:08:21,579 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:08:21] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:08:22,595 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:08:22,596 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:08:22,937 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:08:22] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:08:22,967 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:08:22] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:11:14,581 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:14] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:11:15,685 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:11:15,686 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:11:16,026 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:16] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:11:16,069 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:16] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:11:22,190 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:22] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:11:23,270 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:11:23,271 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:11:23,598 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:23] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:11:23,630 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:11:23] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:12:19,151 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:12:19] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:12:42,593 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:12:42] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:13:03,253 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\data_paths.py', reloading
+2026-03-31 14:13:03,308 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:13:04,095 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:13:04,101 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:13:31,328 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:13:31] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:13:36,964 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:13:36] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:13:36,991 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:13:36,992 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:13:38,284 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:13:38] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:13:38,316 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:13:38] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:14:41,175 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:14:41] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:14:41,199 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:14:41,199 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:14:42,413 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:14:42] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:14:42,451 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:14:42] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:15:37,922 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:15:37,967 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:15:38,581 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:15:38,587 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:16:53,531 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:16:53] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:16:54,739 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:16:54,739 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:16:55,065 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:16:55] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:16:55,094 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:16:55] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:18:00,987 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:18:01,045 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:18:01,853 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:18:01,860 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:18:02,991 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:18:03,044 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:18:03,848 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:18:03,856 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:18:12,343 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:18:12,406 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:18:13,099 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:18:13,105 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:18:54,927 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:18:54] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:18:55,947 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-03-31 14:18:55,947 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-31 14:18:56,271 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:18:56] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:18:56,301 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:18:56] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:19:08,955 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:19:08] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:19:11,860 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:19:11] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:20:44,717 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:20:44] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:20:45,727 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 14:20:46,051 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:20:46] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:20:46,087 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:20:46] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:22:56,524 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:22:56] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:22:57,693 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 14:22:57,916 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:22:57] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:22:57,947 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:22:57] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:24:08,481 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:24:08] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:24:09,596 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 14:24:09,835 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:24:09] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:24:09,869 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:24:09] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:26:53,697 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:26:53] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 14:26:54,841 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 14:26:55,058 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:26:55] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 14:26:55,095 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:26:55] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-03-31 14:28:02,317 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:28:02,431 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:28:03,128 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:28:03,135 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:28:11,567 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:28:11,642 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:28:12,459 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:28:12,465 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:28:24,005 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 14:28:24,055 INFO werkzeug:  * Restarting with stat
+2026-03-31 14:28:25,078 WARNING werkzeug:  * Debugger is active!
+2026-03-31 14:28:25,089 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 14:53:50,921 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:53:50] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 14:54:04,586 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 14:54:04] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 15:03:39,198 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:03:39] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:03:42,781 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:03:42] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:12:03,381 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:12:03,487 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:12:04,685 WARNING werkzeug:  * Debugger is active!
+2026-03-31 15:12:04,692 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 15:12:06,878 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:12:07,014 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:12:07,800 WARNING werkzeug:  * Debugger is active!
+2026-03-31 15:12:07,805 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 15:12:08,950 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:12:08,999 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:12:09,817 WARNING werkzeug:  * Debugger is active!
+2026-03-31 15:12:09,825 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 15:12:38,284 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:12:38,342 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:12:39,070 WARNING werkzeug:  * Debugger is active!
+2026-03-31 15:12:39,078 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 15:12:42,293 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:12:42,356 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:12:43,354 WARNING werkzeug:  * Debugger is active!
+2026-03-31 15:12:43,362 INFO werkzeug:  * Debugger PIN: 521-574-119
+2026-03-31 15:13:38,709 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:13:38] "GET /api/health HTTP/1.1" 200 -
+2026-03-31 15:13:39,434 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 15:13:44,006 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:13:44] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 15:13:48,133 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:13:48] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:18:41,318 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:18:41] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:18:44,258 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:18:44] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:18:53,536 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:18:53] "[33mGET / HTTP/1.1[0m" 404 -
+2026-03-31 15:19:44,607 INFO werkzeug: 127.0.0.1 - - [31/Mar/2026 15:19:44] "GET /__desktop_debug HTTP/1.1" 200 -
+2026-03-31 15:25:14,335 INFO werkzeug:  * Detected change in 'C:\\Users\\Danlu\\OneDrive\\Documents\\GitHub\\Scraper 2.0\\backend\\app.py', reloading
+2026-03-31 15:25:14,419 INFO werkzeug:  * Restarting with stat
+2026-03-31 15:30:27,382 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 15:31:53,632 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 15:32:24,523 WARNING pypdf._reader: Ignoring wrong pointing object 23 0 (offset 0)
+2026-03-31 15:32:24,524 WARNING pypdf._reader: Ignoring wrong pointing object 26 0 (offset 0)
+2026-03-31 15:32:24,525 WARNING pypdf._reader: Ignoring wrong pointing object 41 0 (offset 0)
+2026-03-31 15:32:24,525 WARNING pypdf._reader: Ignoring wrong pointing object 66 0 (offset 0)
+2026-03-31 15:32:24,525 WARNING pypdf._reader: Ignoring wrong pointing object 80 0 (offset 0)
+2026-03-31 15:32:24,526 WARNING pypdf._reader: Ignoring wrong pointing object 145 0 (offset 0)
+2026-03-31 15:32:24,527 WARNING pypdf._reader: Ignoring wrong pointing object 156 0 (offset 0)
+2026-03-31 15:32:24,528 WARNING pypdf._reader: Ignoring wrong pointing object 370 0 (offset 0)
+2026-03-31 15:32:24,528 WARNING pypdf._reader: Ignoring wrong pointing object 434 0 (offset 0)
+2026-03-31 15:32:24,528 WARNING pypdf._reader: Ignoring wrong pointing object 436 0 (offset 0)
+2026-03-31 15:32:28,307 WARNING pypdf._reader: Ignoring wrong pointing object 12 0 (offset 0)
+2026-03-31 15:32:28,886 WARNING pypdf._reader: Ignoring wrong pointing object 10 0 (offset 0)
+2026-03-31 15:32:28,886 WARNING pypdf._reader: Ignoring wrong pointing object 12 0 (offset 0)
+2026-03-31 15:32:28,887 WARNING pypdf._reader: Ignoring wrong pointing object 44 0 (offset 0)
+2026-03-31 15:32:32,734 WARNING pypdf._reader: invalid pdf header: b'<!DOC'
+2026-03-31 15:32:32,756 WARNING pypdf._reader: EOF marker not found
+2026-03-31 15:32:48,262 WARNING pypdf._reader: Ignoring wrong pointing object 10 0 (offset 0)
+2026-03-31 15:32:48,262 WARNING pypdf._reader: Ignoring wrong pointing object 14 0 (offset 0)
+2026-03-31 15:32:48,997 WARNING pypdf._reader: Ignoring wrong pointing object 57 0 (offset 0)
+2026-03-31 15:33:10,124 WARNING pypdf._reader: invalid pdf header: b'<!DOC'
+2026-03-31 15:33:10,148 WARNING pypdf._reader: EOF marker not found
+2026-03-31 15:33:15,143 WARNING pypdf._reader: Ignoring wrong pointing object 15 0 (offset 0)
+2026-03-31 15:33:15,143 WARNING pypdf._reader: Ignoring wrong pointing object 28 0 (offset 0)
+2026-03-31 15:33:20,721 WARNING pypdf._reader: Ignoring wrong pointing object 9 0 (offset 0)
+2026-03-31 15:33:20,721 WARNING pypdf._reader: Ignoring wrong pointing object 11 0 (offset 0)
+2026-03-31 15:33:20,722 WARNING pypdf._reader: Ignoring wrong pointing object 13 0 (offset 0)
+2026-03-31 15:33:20,722 WARNING pypdf._reader: Ignoring wrong pointing object 15 0 (offset 0)
+2026-03-31 15:33:20,722 WARNING pypdf._reader: Ignoring wrong pointing object 17 0 (offset 0)
+2026-03-31 15:33:20,723 WARNING pypdf._reader: Ignoring wrong pointing object 19 0 (offset 0)
+2026-03-31 15:33:20,723 WARNING pypdf._reader: Ignoring wrong pointing object 21 0 (offset 0)
+2026-03-31 15:33:20,723 WARNING pypdf._reader: Ignoring wrong pointing object 23 0 (offset 0)
+2026-03-31 15:33:20,724 WARNING pypdf._reader: Ignoring wrong pointing object 25 0 (offset 0)
+2026-03-31 15:33:20,724 WARNING pypdf._reader: Ignoring wrong pointing object 27 0 (offset 0)
+2026-03-31 15:33:20,724 WARNING pypdf._reader: Ignoring wrong pointing object 39 0 (offset 0)
+2026-03-31 15:33:20,724 WARNING pypdf._reader: Ignoring wrong pointing object 41 0 (offset 0)
+2026-03-31 15:33:20,725 WARNING pypdf._reader: Ignoring wrong pointing object 43 0 (offset 0)
+2026-03-31 15:33:20,725 WARNING pypdf._reader: Ignoring wrong pointing object 45 0 (offset 0)
+2026-03-31 15:33:20,725 WARNING pypdf._reader: Ignoring wrong pointing object 47 0 (offset 0)
+2026-03-31 15:33:20,725 WARNING pypdf._reader: Ignoring wrong pointing object 49 0 (offset 0)
+2026-03-31 15:33:20,725 WARNING pypdf._reader: Ignoring wrong pointing object 51 0 (offset 0)
+2026-03-31 15:33:20,726 WARNING pypdf._reader: Ignoring wrong pointing object 53 0 (offset 0)
+2026-03-31 15:33:20,726 WARNING pypdf._reader: Ignoring wrong pointing object 64 0 (offset 0)
+2026-03-31 15:33:20,726 WARNING pypdf._reader: Ignoring wrong pointing object 69 0 (offset 0)
+2026-03-31 15:33:20,726 WARNING pypdf._reader: Ignoring wrong pointing object 79 0 (offset 0)
+2026-03-31 15:33:20,726 WARNING pypdf._reader: Ignoring wrong pointing object 81 0 (offset 0)
+2026-03-31 15:33:20,727 WARNING pypdf._reader: Ignoring wrong pointing object 236 0 (offset 0)
+2026-03-31 15:33:20,727 WARNING pypdf._reader: Ignoring wrong pointing object 269 0 (offset 0)
+2026-03-31 15:33:20,727 WARNING pypdf._reader: Ignoring wrong pointing object 270 0 (offset 0)
+2026-03-31 15:33:20,736 WARNING pypdf._reader: Ignoring wrong pointing object 3335 0 (offset 0)
+2026-03-31 15:33:20,736 WARNING pypdf._reader: Ignoring wrong pointing object 3337 0 (offset 0)
+2026-03-31 15:33:23,998 WARNING pypdf._reader: Ignoring wrong pointing object 6 0 (offset 0)
+2026-03-31 15:33:23,999 WARNING pypdf._reader: Ignoring wrong pointing object 8 0 (offset 0)
+2026-03-31 15:33:23,999 WARNING pypdf._reader: Ignoring wrong pointing object 12 0 (offset 0)
+2026-03-31 15:33:23,999 WARNING pypdf._reader: Ignoring wrong pointing object 15 0 (offset 0)
+2026-03-31 15:33:23,999 WARNING pypdf._reader: Ignoring wrong pointing object 24 0 (offset 0)
+2026-03-31 15:33:23,999 WARNING pypdf._reader: Ignoring wrong pointing object 27 0 (offset 0)
+2026-03-31 15:33:24,000 WARNING pypdf._reader: Ignoring wrong pointing object 29 0 (offset 0)
+2026-03-31 15:33:24,000 WARNING pypdf._reader: Ignoring wrong pointing object 47 0 (offset 0)
+2026-03-31 15:33:24,000 WARNING pypdf._reader: Ignoring wrong pointing object 87 0 (offset 0)
+2026-03-31 15:33:24,001 WARNING pypdf._reader: Ignoring wrong pointing object 165 0 (offset 0)
+2026-03-31 15:33:24,001 WARNING pypdf._reader: Ignoring wrong pointing object 167 0 (offset 0)
+2026-03-31 15:33:24,001 WARNING pypdf._reader: Ignoring wrong pointing object 181 0 (offset 0)
+2026-03-31 15:35:31,095 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 15:36:15,573 ERROR app: Exception on /api/screenshot [POST]
+Traceback (most recent call last):
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "C:\Users\Danlu\OneDrive\Documents\GitHub\Scraper 2.0\backend\app.py", line 662, in api_screenshot_capture
+    page_title=page_title,
+NameError: name 'page_title' is not defined
+2026-03-31 15:55:51,540 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 15:57:45,251 ERROR app: Exception on /api/screenshot [POST]
+Traceback (most recent call last):
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Danlu\AppData\Roaming\Python\Python310\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "C:\Users\Danlu\OneDrive\Documents\GitHub\Scraper 2.0\backend\app.py", line 734, in api_screenshot_capture
+    page_title=page_title,
+NameError: name 'page_title' is not defined
+2026-03-31 16:02:42,144 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 16:03:03,271 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:03:03,273 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:03:05,672 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:03:05,673 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:03:06,194 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:03:06,195 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:03:06,397 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:03:06,398 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:03:06,859 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:03:06,860 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:03:37,942 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 16:04:12,248 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:04:12,250 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:05:59,383 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 16:06:15,853 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:06:15,854 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:06:17,497 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:06:17,498 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:06:17,896 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:06:17,898 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:06:18,097 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:06:18,098 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:06:18,258 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:06:18,259 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-03-31 16:21:08,267 INFO waitress: Serving on http://127.0.0.1:5000
+2026-03-31 16:21:28,931 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/
+2026-03-31 16:21:28,933 WARNING app: screenshot API: playwright missing: Playwright is not installed

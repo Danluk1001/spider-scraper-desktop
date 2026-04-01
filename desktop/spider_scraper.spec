@@ -49,6 +49,7 @@ a = Analysis(
         "webview",
         "clr_loader",
         "pythonnet",
+        "waitress",
     ],
     hookspath=[],
     hooksconfig={},
@@ -63,7 +64,7 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 _exe_kw = dict(
-    name="SpiderScraper",
+    name="Spider-Scraper",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

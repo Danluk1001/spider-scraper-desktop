@@ -4,9 +4,6 @@ Spider Scraper desktop shell: Flask backend + PyWebView window.
 Usage (development, from repo root):
   python desktop/launcher.py --dev          # Vite HMR on :5173, Flask on :5000
   python desktop/launcher.py                # Flask serves frontend/dist + API on one port
-
-Packaged (PyInstaller): run the built .exe; set SPIDER_SCRAPER_FRONTEND_DIST in the spec
-or bundle ``frontend/dist`` under ``_MEIPASS/frontend/dist`` (see desktop/spider_scraper.spec).
 """
 
 from __future__ import annotations
@@ -22,12 +19,11 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-WINDOW_TITLE = "Spider Scraper"
+WINDOW_TITLE = "Spider-Scraper"
 VITE_PORT = 5173
 
 
 def _resolve_repo_root() -> Path:
-    """Project root: repo in dev, or PyInstaller extract / exe folder when frozen."""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
@@ -41,7 +37,6 @@ def _backend_dir(root: Path) -> Path:
 
 
 def _ensure_backend_on_path(root: Path) -> None:
-    """Dev: add ``repo/backend`` so ``import app`` works. Frozen: prepend ``sys._MEIPASS``."""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
@@ -49,6 +44,7 @@ def _ensure_backend_on_path(root: Path) -> None:
             if s not in sys.path:
                 sys.path.insert(0, s)
         return
+
     b = _backend_dir(root)
     if b.is_dir():
         s = str(b)
@@ -57,15 +53,16 @@ def _ensure_backend_on_path(root: Path) -> None:
 
 
 def _apply_packaged_env(root: Path, dev: bool) -> None:
-    """Point Flask at bundled ``frontend/dist`` and serve the SPA (non-dev only)."""
     if dev:
+        os.environ.pop("SPIDER_SCRAPER_SERVE_FRONTEND", None)
+        os.environ.pop("SPIDER_SCRAPER_FRONTEND_DIST", None)
         return
-    dist = root / "frontend" / "dist"
+
+    dist = (root / "frontend" / "dist").resolve()
     os.environ["SPIDER_SCRAPER_SERVE_FRONTEND"] = "1"
-    os.environ.setdefault("SPIDER_SCRAPER_FRONTEND_DIST", str(dist))
-    # Stable desktop runs: no Flask reloader / extra threads from debug toolbar.
+    os.environ["SPIDER_SCRAPER_FRONTEND_DIST"] = str(dist)
     os.environ.setdefault("SPIDER_SCRAPER_DEBUG", "0")
-    # Optional bundled Playwright browsers: _MEIPASS/ms-playwright.
+
     bundled_pw = root / "ms-playwright"
     if bundled_pw.is_dir():
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled_pw))
@@ -83,22 +80,36 @@ def _wait_for_http(url: str, timeout: float = 90.0) -> bool:
     return False
 
 
-def _run_flask() -> None:
+def _run_flask(dev_mode: bool) -> None:
     _ensure_backend_on_path(REPO_ROOT)
-    # Import after main() sets SPIDER_SCRAPER_* env vars.
-    from app import app as flask_app  # noqa: WPS433
+
+    if dev_mode:
+        os.environ.pop("SPIDER_SCRAPER_SERVE_FRONTEND", None)
+        os.environ.pop("SPIDER_SCRAPER_FRONTEND_DIST", None)
+    else:
+        dist = (REPO_ROOT / "frontend" / "dist").resolve()
+        os.environ["SPIDER_SCRAPER_SERVE_FRONTEND"] = "1"
+        os.environ["SPIDER_SCRAPER_FRONTEND_DIST"] = str(dist)
+
+    from app import app as flask_app
     from app_config import load_app_config
 
     cfg = load_app_config()
     host = str(cfg.get("backend_host") or "127.0.0.1")
     port = int(cfg.get("backend_port") or 5000)
-    flask_app.run(
-        host=host,
-        port=port,
-        debug=False,
-        threaded=True,
-        use_reloader=False,
-    )
+
+    try:
+        from waitress import serve as waitress_serve
+    except ImportError:
+        flask_app.run(
+            host=host,
+            port=port,
+            debug=False,
+            threaded=True,
+            use_reloader=False,
+        )
+    else:
+        waitress_serve(flask_app, host=host, port=port, threads=8)
 
 
 def _flask_base_url() -> str:
@@ -110,27 +121,17 @@ def _flask_base_url() -> str:
     return f"http://127.0.0.1:{port}"
 
 
-def _icon_path(root: Path) -> str | None:
-    candidates = [
-        root / "desktop" / "resources" / "icon.ico",
-        root / "resources" / "icon.ico",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return str(p)
-    return None
-
-
 REPO_ROOT = _resolve_repo_root()
 
 
 def main() -> None:
     global REPO_ROOT
+
     parser = argparse.ArgumentParser(description="Spider Scraper desktop launcher")
     parser.add_argument(
         "--dev",
         action="store_true",
-        help="Run Vite dev server (HMR); webview loads :%s; Flask still serves /api." % VITE_PORT,
+        help=f"Run Vite dev server (HMR); webview loads :{VITE_PORT}; Flask still serves /api.",
     )
     parser.add_argument(
         "--no-webview",
@@ -144,6 +145,9 @@ def main() -> None:
 
     _apply_packaged_env(REPO_ROOT, dev=args.dev)
 
+    print("SPIDER_SCRAPER_SERVE_FRONTEND =", os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND"))
+    print("SPIDER_SCRAPER_FRONTEND_DIST =", os.environ.get("SPIDER_SCRAPER_FRONTEND_DIST"))
+
     if not args.dev:
         dist = REPO_ROOT / "frontend" / "dist"
         if not (dist / "index.html").is_file():
@@ -156,7 +160,7 @@ def main() -> None:
             )
             sys.exit(1)
 
-    flask_thread = threading.Thread(target=_run_flask, daemon=True)
+    flask_thread = threading.Thread(target=_run_flask, args=(args.dev,), daemon=True)
     flask_thread.start()
 
     base = _flask_base_url()
@@ -167,22 +171,27 @@ def main() -> None:
 
     vite_proc: subprocess.Popen | None = None
     url: str
+
     if args.dev:
         npm = shutil.which("npm")
         if not npm:
             print("npm not found in PATH (install Node.js).", file=sys.stderr)
             sys.exit(1)
+
         fe = REPO_ROOT / "frontend"
         if not (fe / "package.json").is_file():
             print("frontend/package.json missing.", file=sys.stderr)
             sys.exit(1)
+
         popen_kw: dict = {
             "cwd": str(fe),
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
         }
+
         if sys.platform == "win32":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+
         vite_proc = subprocess.Popen(
             [
                 npm,
@@ -197,17 +206,19 @@ def main() -> None:
             ],
             **popen_kw,
         )
+
         url = f"http://127.0.0.1:{VITE_PORT}/"
         if not _wait_for_http(url):
             print(
-                "Vite did not start on port %s. Run `npm run dev` in frontend/ to see errors."
-                % VITE_PORT,
+                f"Vite did not start on port {VITE_PORT}. Run `npm run dev` in frontend/ to see errors.",
                 file=sys.stderr,
             )
             vite_proc.terminate()
             sys.exit(1)
     else:
         url = f"{base}/"
+
+    print(f"[Spider-Scraper launcher] PyWebView URL: {url}", flush=True)
 
     if args.no_webview:
         print("Flask:", base)
@@ -226,11 +237,14 @@ def main() -> None:
 
     import webview
 
-    icon = _icon_path(REPO_ROOT)
-    if icon:
-        webview.create_window(WINDOW_TITLE, url, icon=icon)
-    else:
-        webview.create_window(WINDOW_TITLE, url)
+    webview.create_window(
+        WINDOW_TITLE,
+        url,
+        width=1600,
+        height=950,
+        min_size=(1200, 700),
+    )
+
     try:
         webview.start(debug=False)
     finally:

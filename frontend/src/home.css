@@ -21,6 +21,18 @@
   flex-wrap: wrap;
 }
 
+.scraper-load-sitemap-dialog {
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 18px 20px;
+  background: #ffffff;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
+}
+
+.scraper-load-sitemap-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.4);
+}
+
 .scraper-main {
   display: grid;
   grid-template-columns: minmax(320px, 46%) minmax(320px, 54%);

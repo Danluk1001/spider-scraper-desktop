@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import axios from "axios";
 import "../home.css";
 import { SitemapGraphView } from "../components/SitemapGraphView";
@@ -992,22 +999,80 @@ function CodePreviewPanel({
 /** Screenshot tab errors: missing Playwright vs other (navigation, timeout, etc.). */
 type ScreenshotErrorState =
   | null
-  | { kind: "playwright_missing" }
+  | {
+      kind: "playwright_missing";
+      pythonExecutable?: string;
+      serverMessage?: string;
+      chromiumAvailable?: boolean | null;
+      importError?: string;
+    }
   | { kind: "generic"; message: string };
 
 type ScreenshotGalleryItem = {
   filename: string;
   imageUrl: string;
+  image_url?: string;
   pageUrl: string;
   pageTitle?: string | null;
   capturedAt?: string;
 };
 
 function parseScreenshotApiError(data: unknown): Exclude<ScreenshotErrorState, null> {
-  if (data && typeof data === "object" && "error" in data) {
-    const d = data as { error?: unknown; message?: unknown };
+  if (!data || typeof data !== "object") {
+    return { kind: "generic", message: "Unexpected response from server." };
+  }
+  const d = data as {
+    ok?: unknown;
+    error?: unknown;
+    message?: unknown;
+  };
+  if (d.ok === false) {
+    const code = typeof d.error === "string" ? d.error : "error";
+    const msg =
+      typeof d.message === "string" && d.message.length > 0 ? d.message : code;
+    if (code === "playwright_missing") {
+      const ext = d as {
+        python_executable?: unknown;
+        chromium_available?: unknown;
+        import_error?: unknown;
+      };
+      return {
+        kind: "playwright_missing",
+        serverMessage: typeof msg === "string" ? msg : undefined,
+        pythonExecutable:
+          typeof ext.python_executable === "string" ? ext.python_executable : undefined,
+        chromiumAvailable:
+          typeof ext.chromium_available === "boolean"
+            ? ext.chromium_available
+            : ext.chromium_available === null
+              ? null
+              : undefined,
+        importError: typeof ext.import_error === "string" ? ext.import_error : undefined,
+      };
+    }
+    return { kind: "generic", message: msg };
+  }
+  if ("error" in d && d.error) {
     if (d.error === "playwright_missing") {
-      return { kind: "playwright_missing" };
+      const ext = d as {
+        python_executable?: unknown;
+        chromium_available?: unknown;
+        import_error?: unknown;
+        message?: unknown;
+      };
+      return {
+        kind: "playwright_missing",
+        serverMessage: typeof ext.message === "string" ? ext.message : undefined,
+        pythonExecutable:
+          typeof ext.python_executable === "string" ? ext.python_executable : undefined,
+        chromiumAvailable:
+          typeof ext.chromium_available === "boolean"
+            ? ext.chromium_available
+            : ext.chromium_available === null
+              ? null
+              : undefined,
+        importError: typeof ext.import_error === "string" ? ext.import_error : undefined,
+      };
     }
     if (typeof d.error === "string" && d.error.length > 0) {
       const msg =
@@ -1113,11 +1178,49 @@ function PageScreenshotPanel({
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: "8px", color: "#92400e" }}>
-            Playwright is not installed on the server
+            Playwright is not installed in the backend Python
           </div>
           <p style={{ margin: "0 0 10px 0" }}>
-            Install the Python package and Chromium for the backend, then click Retry (or Capture
-            again).
+            {error.serverMessage ??
+              "Install Playwright and Chromium into the same Python that runs your app (the desktop launcher starts Flask with that interpreter)."}
+          </p>
+          {error.pythonExecutable ? (
+            <div style={{ margin: "0 0 12px 0" }}>
+              <div style={{ fontSize: "12px", fontWeight: 600, color: "#78350f", marginBottom: "4px" }}>
+                Backend Python (use this exact executable for pip):
+              </div>
+              <code
+                style={{
+                  display: "block",
+                  wordBreak: "break-all",
+                  background: "#fef3c7",
+                  padding: "8px 10px",
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                  color: "#1c1917",
+                }}
+              >
+                {error.pythonExecutable}
+              </code>
+            </div>
+          ) : null}
+          {error.chromiumAvailable === false ? (
+            <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#92400e" }}>
+              The Playwright package is present, but Chromium could not be launched. Run{" "}
+              <code style={{ background: "#fef3c7", padding: "1px 6px", borderRadius: "4px" }}>
+                playwright install chromium
+              </code>{" "}
+              using the Python above.
+            </p>
+          ) : null}
+          {error.importError ? (
+            <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#57534e" }}>
+              Import error: {error.importError}
+            </p>
+          ) : null}
+          <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#57534e" }}>
+            In a terminal, run (replace <code style={{ background: "#fef3c7", padding: "1px 4px" }}>python</code> with
+            the path above if needed):
           </p>
           <ol style={{ margin: "0 0 10px 1.2em", padding: 0 }}>
             <li style={{ marginBottom: "6px" }}>
@@ -1148,7 +1251,7 @@ function PageScreenshotPanel({
             </li>
           </ol>
           <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
-            Run these in your backend environment, restart the Flask server, then try again.
+            Restart the app after installing, then Retry.
           </p>
         </div>
       ) : error?.kind === "generic" ? (
@@ -1240,10 +1343,12 @@ function ScreenshotGalleryPanel({
             alignContent: "start",
           }}
         >
-          {items.map((item) => (
+          {items.map((item) => {
+            const shotPath = item.imageUrl || item.image_url || "";
+            return (
             <a
               key={item.filename}
-              href={apiUrl(item.imageUrl)}
+              href={apiUrl(shotPath)}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -1259,7 +1364,7 @@ function ScreenshotGalleryPanel({
               title={`Open full image\n${item.pageUrl}`}
             >
               <img
-                src={`${apiUrl(item.imageUrl)}?thumb=${encodeURIComponent(item.filename)}`}
+                src={`${apiUrl(shotPath)}?thumb=${encodeURIComponent(item.filename)}`}
                 alt={item.pageTitle || item.pageUrl || item.filename}
                 style={{ width: "100%", height: 140, objectFit: "cover", background: "#f1f5f9" }}
               />
@@ -1291,7 +1396,8 @@ function ScreenshotGalleryPanel({
                 </div>
               </div>
             </a>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1588,15 +1694,24 @@ function normalizeLoadedPage(p: ScrapedPage & { id?: number }): ScrapedPage {
   return { ...rest, nodeId };
 }
 
+/** Crawl depth for Save/Load and `/api/crawl` (1 = root only, 2–3 = follow internal links). */
+type CrawlDepth = 1 | 2 | 3;
+
 /** POST /api/sitemap/save request body */
 type SitemapSavePayload = {
   rootUrl: string;
+  crawlDepth: CrawlDepth;
   pages: ScrapedPage[];
   edges: SitemapEdge[];
   selectedPage: ScrapedPage | null;
+  /** Redundant with selectedPage but stable for scripts / future UI */
+  selectedPageId: string | null;
+  selectedPageUrl: string | null;
   logs: string[];
   /** ISO 8601 timestamp */
   savedAt: string;
+  /** Custom basename; server adds .json if missing */
+  filename: string;
 };
 
 /** POST /api/sitemap/save success JSON */
@@ -1620,31 +1735,50 @@ type SitemapListResponse = {
 /** GET /api/sitemap/load — same shape as saved JSON */
 type SitemapSnapshot = {
   rootUrl?: string;
+  crawlDepth?: CrawlDepth;
   pages?: ScrapedPage[];
   edges?: SitemapEdge[];
   selectedPage?: ScrapedPage | null;
+  selectedPageId?: string | null;
+  selectedPageUrl?: string | null;
   logs?: string[];
   savedAt?: string;
 };
 
-/** Pick the row to highlight after load: nodeId, legacy id, then url, else first page. */
+/**
+ * Pick the row to highlight after load: saved object (nodeId / legacy id / url), then
+ * optional selectedPageId / selectedPageUrl from the snapshot, else first page.
+ */
 function restoreSelectedPage(
   loadedPages: ScrapedPage[],
   saved: ScrapedPage | null | undefined,
+  selectedPageId?: string | null,
+  selectedPageUrl?: string | null,
 ): ScrapedPage | null {
   if (loadedPages.length === 0) return null;
-  if (saved == null) return loadedPages[0];
-  if (saved.nodeId) {
-    const byNode = loadedPages.find((p) => p.nodeId === saved.nodeId);
+  if (saved != null) {
+    if (saved.nodeId) {
+      const byNode = loadedPages.find((p) => p.nodeId === saved.nodeId);
+      if (byNode) return byNode;
+    }
+    const legacy = saved as ScrapedPage & { id?: number };
+    if (typeof legacy.id === "number") {
+      const byLegacy = loadedPages.find((p) => p.nodeId === `legacy-${legacy.id}`);
+      if (byLegacy) return byLegacy;
+    }
+    if (saved.url) {
+      const byUrl = loadedPages.find((p) => p.url === saved.url);
+      if (byUrl) return byUrl;
+    }
+  }
+  if (selectedPageId) {
+    const byNode = loadedPages.find((p) => p.nodeId === selectedPageId);
     if (byNode) return byNode;
   }
-  const legacy = saved as ScrapedPage & { id?: number };
-  if (typeof legacy.id === "number") {
-    const byLegacy = loadedPages.find((p) => p.nodeId === `legacy-${legacy.id}`);
-    if (byLegacy) return byLegacy;
+  if (selectedPageUrl) {
+    const byUrl = loadedPages.find((p) => p.url === selectedPageUrl);
+    if (byUrl) return byUrl;
   }
-  const byUrl = loadedPages.find((p) => p.url === saved.url);
-  if (byUrl) return byUrl;
   return loadedPages[0];
 }
 
@@ -1859,8 +1993,6 @@ type ScrapeResult = {
 
 /** One server request runs the full depth-limited crawl (same host, deduped URLs). */
 const CRAWL_API_TIMEOUT_MS = 15 * 60 * 1000;
-
-type CrawlDepth = 1 | 2 | 3;
 
 type CrawlGraphResult = {
   pages: ScrapedPage[];
@@ -2431,7 +2563,15 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [savingSitemap, setSavingSitemap] = useState(false);
+  /** Brief toolbar message after a successful Save Sitemap */
+  const [sitemapSaveNotice, setSitemapSaveNotice] = useState<string | null>(null);
+  /** Brief toolbar message after a successful Load Sitemap */
+  const [sitemapLoadNotice, setSitemapLoadNotice] = useState<string | null>(null);
   const [loadingSitemap, setLoadingSitemap] = useState(false);
+  /** Files from GET /api/sitemap/list while the load picker is open */
+  const [sitemapPickerFiles, setSitemapPickerFiles] = useState<SitemapListFile[]>([]);
+  const [sitemapPickerSelected, setSitemapPickerSelected] = useState("");
+  const loadSitemapDialogRef = useRef<HTMLDialogElement>(null);
   const [exportingCsv, setExportingCsv] = useState(false);
   const [exportingJson, setExportingJson] = useState(false);
   const [edges, setEdges] = useState<SitemapEdge[]>([]);
@@ -2500,19 +2640,20 @@ export default function Home() {
     "Sitemap Graph",
   ];
 
-  const handleScrapeSite = async () => {
-    const start = rootUrl.trim();
+  /** Shared crawl used by “Scrape site” and “Load & refresh crawl”. */
+  const runCrawl = async (startUrl: string, depth: CrawlDepth) => {
+    const start = startUrl.trim();
     if (!start) return;
 
     setLoading(true);
     setCrawlProgress(null);
     setLogs((prev) => [
       ...prev,
-      `Crawl from ${start} (depth ${crawlDepth}, same domain, server-side BFS, all reachable pages)…`,
+      `Crawl from ${start} (depth ${depth}, same domain, server-side BFS, all reachable pages)…`,
     ]);
 
     try {
-      const crawlResult = await serverCrawl(start, crawlDepth, {
+      const crawlResult = await serverCrawl(start, depth, {
         onLog: (line) => setLogs((prev) => [...prev, line]),
         onProgress: (p) => setCrawlProgress(p),
       });
@@ -2535,6 +2676,10 @@ export default function Home() {
       setLoading(false);
       setCrawlProgress(null);
     }
+  };
+
+  const handleScrapeSite = async () => {
+    await runCrawl(rootUrl, crawlDepth);
   };
 
   const handleScrapeAllMedia = async (kind: "images" | "videos") => {
@@ -2695,16 +2840,33 @@ export default function Home() {
   };
 
   const handleSaveSitemap = async () => {
+    const defaultName = `sitemap-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`;
+    const nameInput = window.prompt(
+      "Save sitemap as (file is written to the server data/sitemaps folder)",
+      defaultName,
+    );
+    if (nameInput === null) return;
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setLogs((prev) => [...prev, "Save cancelled — filename was empty."]);
+      return;
+    }
+
     const payload: SitemapSavePayload = {
       rootUrl,
+      crawlDepth,
       pages,
       edges,
       selectedPage,
+      selectedPageId: selectedPage?.nodeId ?? null,
+      selectedPageUrl: selectedPage?.url ?? null,
       logs,
       savedAt: new Date().toISOString(),
+      filename: trimmed,
     };
 
     setSavingSitemap(true);
+    setSitemapSaveNotice(null);
     setLogs((prev) => [...prev, "Saving sitemap…"]);
     try {
       const res = await axios.post<SitemapSaveResponse>(
@@ -2717,6 +2879,8 @@ export default function Home() {
       );
       const data = res.data;
       if (data.ok) {
+        setSitemapSaveNotice(`Saved: ${data.filename}`);
+        window.setTimeout(() => setSitemapSaveNotice(null), 5000);
         setLogs((prev) => [
           ...prev,
           `Sitemap saved: ${data.filename}`,
@@ -2738,8 +2902,10 @@ export default function Home() {
     }
   };
 
-  const handleLoadSitemap = async () => {
+  /** Step 1: fetch file list from the server and open the picker dialog. */
+  const handleOpenLoadSitemapPicker = async () => {
     setLoadingSitemap(true);
+    setSitemapLoadNotice(null);
     try {
       const listRes = await axios.get<SitemapListResponse>(apiUrl("/api/sitemap/list"), {
         timeout: 30_000,
@@ -2749,29 +2915,37 @@ export default function Home() {
         setLogs((prev) => [...prev, "No saved sitemaps yet — use Save Sitemap first."]);
         return;
       }
-
-      const lines = files.map((f, i) => `${i + 1}. ${f.filename}`).join("\n");
-      const choice = window.prompt(
-        `Saved sitemaps (newest first).\nEnter a number (1–${files.length}) or the exact filename:\n\n${lines}`,
-      );
-      if (choice === null) {
-        setLogs((prev) => [...prev, "Load sitemap cancelled."]);
-        return;
+      setSitemapPickerFiles(files);
+      setSitemapPickerSelected(files[0].filename);
+      loadSitemapDialogRef.current?.showModal();
+    } catch (e: unknown) {
+      let msg = "Could not list sitemaps";
+      if (axios.isAxiosError(e) && e.response?.data && typeof e.response.data === "object") {
+        const body = e.response.data as { error?: string };
+        if (body.error) msg = body.error;
+      } else if (e instanceof Error) {
+        msg = e.message;
       }
+      console.error(e);
+      setLogs((prev) => [...prev, `Sitemap list error: ${msg}`]);
+    } finally {
+      setLoadingSitemap(false);
+    }
+  };
 
-      const trimmed = choice.trim();
-      let filename: string | undefined;
-      const n = parseInt(trimmed, 10);
-      if (!Number.isNaN(n) && n >= 1 && n <= files.length) {
-        filename = files[n - 1].filename;
-      } else {
-        filename = files.find((f) => f.filename === trimmed)?.filename;
-      }
-      if (!filename) {
-        setLogs((prev) => [...prev, `No file matched "${trimmed}".`]);
-        return;
-      }
+  /** Step 2: GET /api/sitemap/load, restore state, then optionally run the same crawl as “Scrape site”. */
+  const handleConfirmLoadSitemap = async (mode: "only" | "refresh") => {
+    const filename = sitemapPickerSelected;
+    if (!filename || loadingSitemap) return;
 
+    loadSitemapDialogRef.current?.close();
+    setLoadingSitemap(true);
+
+    let loadedRoot = "";
+    let loadedDepth: CrawlDepth = 2;
+    let snapshotOk = false;
+
+    try {
       const loadRes = await axios.get<SitemapSnapshot>(apiUrl("/api/sitemap/load"), {
         params: { filename },
         timeout: 120_000,
@@ -2779,19 +2953,41 @@ export default function Home() {
       const data = loadRes.data;
       if (typeof (data as { error?: string }).error === "string") {
         setLogs((prev) => [...prev, `Load failed: ${(data as { error: string }).error}`]);
-        return;
-      }
+      } else {
+        const raw = Array.isArray(data.pages) ? data.pages : [];
+        const nextPages = raw.map((row) =>
+          normalizeLoadedPage(row as ScrapedPage & { id?: number }),
+        );
+        loadedRoot = typeof data.rootUrl === "string" ? data.rootUrl : "";
+        const d = data.crawlDepth;
+        loadedDepth = d === 1 || d === 2 || d === 3 ? d : 2;
 
-      const raw = Array.isArray(data.pages) ? data.pages : [];
-      const nextPages = raw.map((row) =>
-        normalizeLoadedPage(row as ScrapedPage & { id?: number }),
-      );
-      setRootUrl(typeof data.rootUrl === "string" ? data.rootUrl : "");
-      setPages(nextPages);
-      setEdges(Array.isArray(data.edges) ? data.edges : []);
-      setSelectedPage(restoreSelectedPage(nextPages, data.selectedPage ?? null));
-      const priorLogs = Array.isArray(data.logs) ? data.logs : [];
-      setLogs([...priorLogs, `Loaded sitemap: ${filename}`]);
+        setRootUrl(loadedRoot);
+        setCrawlDepth(loadedDepth);
+        setPages(nextPages);
+        setEdges(Array.isArray(data.edges) ? data.edges : []);
+        setSelectedPage(
+          restoreSelectedPage(
+            nextPages,
+            data.selectedPage ?? null,
+            data.selectedPageId,
+            data.selectedPageUrl,
+          ),
+        );
+        const priorLogs = Array.isArray(data.logs) ? data.logs : [];
+        const loadedLine =
+          mode === "refresh"
+            ? `Loaded sitemap: ${filename} — starting refresh crawl…`
+            : `Loaded sitemap: ${filename}`;
+        setLogs([...priorLogs, loadedLine]);
+        setSitemapLoadNotice(
+          mode === "refresh" ? `Loaded: ${filename} — crawling…` : `Loaded: ${filename}`,
+        );
+        if (mode !== "refresh") {
+          window.setTimeout(() => setSitemapLoadNotice(null), 5000);
+        }
+        snapshotOk = true;
+      }
     } catch (e: unknown) {
       let msg = "Load failed";
       if (axios.isAxiosError(e) && e.response?.data && typeof e.response.data === "object") {
@@ -2805,6 +3001,19 @@ export default function Home() {
     } finally {
       setLoadingSitemap(false);
     }
+
+    if (!snapshotOk || mode !== "refresh") return;
+
+    const start = loadedRoot.trim();
+    if (!start) {
+      setLogs((prev) => [...prev, "Cannot refresh crawl: saved root URL is empty."]);
+      setSitemapLoadNotice(null);
+      return;
+    }
+
+    await runCrawl(start, loadedDepth);
+    setSitemapLoadNotice(`Loaded & refreshed: ${filename}`);
+    window.setTimeout(() => setSitemapLoadNotice(null), 5000);
   };
 
   const handleExportCsv = async () => {
@@ -3008,29 +3217,60 @@ export default function Home() {
     setScreenshotError(null);
     try {
       const res = await axios.post<
-        | { ok: true; filename: string; imageUrl: string }
+        | {
+            ok: true;
+            filename: string;
+            image_url: string;
+            saved_path?: string;
+            page_url?: string;
+          }
+        | { ok: false; error: string; message: string }
         | { error: string; message?: string }
-      >(apiUrl("/api/screenshot"), { url, pageTitle: selectedPage?.title ?? "" }, {
-        timeout: 120_000,
-        headers: { "Content-Type": "application/json" },
-      });
+      >(
+        apiUrl("/api/screenshot"),
+        { url, pageTitle: selectedPage?.title ?? "" },
+        {
+          timeout: 120_000,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
       const d = res.data;
+      if (d && typeof d === "object" && "ok" in d && d.ok === false) {
+        setScreenshotError(parseScreenshotApiError(d));
+        return;
+      }
+      if (d && typeof d === "object" && "ok" in d && d.ok === true) {
+        const rel =
+          "image_url" in d && typeof d.image_url === "string"
+            ? d.image_url
+            : "imageUrl" in d && typeof (d as { imageUrl?: string }).imageUrl === "string"
+              ? (d as { imageUrl: string }).imageUrl
+              : "";
+        if (rel) {
+          setScreenshotPreviewUrl(`${apiUrl(rel)}?t=${Date.now()}`);
+          void loadScreenshotGallery();
+          return;
+        }
+      }
       if ("error" in d && d.error) {
         setScreenshotError(parseScreenshotApiError(d));
         return;
       }
-      if (!("ok" in d && d.ok && d.imageUrl)) {
-        setScreenshotError(parseScreenshotApiError(d));
-        return;
-      }
-      setScreenshotPreviewUrl(`${apiUrl(d.imageUrl)}?t=${Date.now()}`);
-      void loadScreenshotGallery();
+      setScreenshotError({ kind: "generic", message: "Invalid screenshot response from server." });
     } catch (e: unknown) {
       if (axios.isAxiosError(e)) {
         const body = e.response?.data;
-        setScreenshotError(
-          body ? parseScreenshotApiError(body) : { kind: "generic", message: e.message },
-        );
+        if (body && typeof body === "object") {
+          setScreenshotError(parseScreenshotApiError(body));
+        } else if (e.response && typeof e.response.data === "string") {
+          const snippet = (e.response.data as string).slice(0, 200);
+          setScreenshotError({
+            kind: "generic",
+            message: `Server error (${e.response.status ?? "?"}): ${snippet || e.message}`,
+          });
+        } else {
+          setScreenshotError({ kind: "generic", message: e.message });
+        }
       } else {
         setScreenshotError({ kind: "generic", message: String(e) });
       }
@@ -3158,7 +3398,7 @@ export default function Home() {
 
         <button
           type="button"
-          onClick={() => void handleLoadSitemap()}
+          onClick={() => void handleOpenLoadSitemapPicker()}
           disabled={loading || savingSitemap || loadingSitemap}
           style={{
             padding: "10px 14px",
@@ -3243,6 +3483,20 @@ export default function Home() {
           {exportingJson ? "Exporting…" : "Export JSON"}
         </button>
 
+        {sitemapSaveNotice || sitemapLoadNotice ? (
+          <div
+            role="status"
+            style={{
+              flex: "1 1 100%",
+              fontSize: "13px",
+              fontWeight: 600,
+              color: "#047857",
+              padding: "4px 0 0",
+            }}
+          >
+            {[sitemapSaveNotice, sitemapLoadNotice].filter(Boolean).join(" · ")}
+          </div>
+        ) : null}
       </div>
 
       <div className="scraper-main">
@@ -3874,6 +4128,112 @@ ${selectedPage.preview.join("\n\n")}`}
             : "Done"}
         </div>
       </div>
+
+      <dialog
+        ref={loadSitemapDialogRef}
+        className="scraper-load-sitemap-dialog"
+        aria-labelledby="load-sitemap-dialog-title"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px", minWidth: "min(420px, 92vw)" }}>
+          <h2
+            id="load-sitemap-dialog-title"
+            style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}
+          >
+            Load sitemap
+          </h2>
+          <p style={{ margin: 0, fontSize: "13px", color: "#475569", lineHeight: 1.45 }}>
+            Choose a JSON file from the server (newest first). Your current workspace will be
+            replaced by the saved project. Then load as-is, or reload page data with a fresh crawl
+            using the saved root URL and depth.
+          </p>
+          <label htmlFor="load-sitemap-select" style={{ fontSize: "13px", fontWeight: 600, color: "#334155" }}>
+            Saved file
+          </label>
+          <select
+            id="load-sitemap-select"
+            value={sitemapPickerSelected}
+            onChange={(e) => setSitemapPickerSelected(e.target.value)}
+            style={{
+              padding: "10px 12px",
+              borderRadius: "8px",
+              border: "1px solid #cbd5e1",
+              fontSize: "14px",
+              background: "#fff",
+              color: "#0f172a",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          >
+            {sitemapPickerFiles.map((f) => (
+              <option key={f.filename} value={f.filename}>
+                {f.filename}
+                {f.modified ? ` — ${f.modified.slice(0, 19).replace("T", " ")}` : ""}
+              </option>
+            ))}
+          </select>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: "10px",
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => loadSitemapDialogRef.current?.close()}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: "#fff",
+                color: "#334155",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConfirmLoadSitemap("only")}
+              disabled={loadingSitemap || sitemapPickerFiles.length === 0}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: "1px solid #0d9488",
+                background: loadingSitemap ? "#ccfbf1" : "#f0fdfa",
+                color: "#115e59",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: loadingSitemap || sitemapPickerFiles.length === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              {loadingSitemap ? "Loading…" : "Load only"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConfirmLoadSitemap("refresh")}
+              disabled={loadingSitemap || sitemapPickerFiles.length === 0}
+              title="Restore the snapshot, then run a new crawl (same as Scrape site) with saved URL and depth."
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: "1px solid #0369a1",
+                background: loadingSitemap ? "#e0f2fe" : "#f0f9ff",
+                color: "#0c4a6e",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: loadingSitemap || sitemapPickerFiles.length === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              {loadingSitemap ? "Loading…" : "Load & refresh crawl"}
+            </button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }

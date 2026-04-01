@@ -1,3 +1,10 @@
+import os
+import sys
+
+print("backend sees SPIDER_SCRAPER_SERVE_FRONTEND =", os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND"))
+print("backend sees SPIDER_SCRAPER_FRONTEND_DIST =", os.environ.get("SPIDER_SCRAPER_FRONTEND_DIST"))
+
+import csv
 import io
 import json
 import logging
@@ -5,6 +12,8 @@ import queue
 import re
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
 
 from flask import (
     Flask,
@@ -22,7 +31,6 @@ from app_config import load_app_config, save_app_config
 from data_paths import (
     ensure_app_data_directories,
     get_exports_directory,
-    get_frontend_dist_directory,
     get_logs_directory,
     get_screenshots_directory,
     get_sitemap_directory,
@@ -30,14 +38,17 @@ from data_paths import (
     resolve_sitemap_file,
     safe_join_data_path,
 )
-from page_screenshot import PageScreenshotError, PlaywrightMissingError, capture_page_screenshot_png
+from page_screenshot import (
+    PageScreenshotError,
+    PlaywrightMissingError,
+    capture_page_screenshot_png,
+    inspect_playwright_environment,
+)
 from scraper import crawl_site_depth, scrape_page
 from media_zip import create_media_zip, fetch_url_for_download
-import csv
-import os
-from typing import Any, Optional
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 # Ensure packaged app always has writable folders on startup.
 _APP_DIRS = ensure_app_data_directories()
@@ -423,17 +434,81 @@ def _safe_sitemap_filename(saved_at: str) -> str:
     return s[:160]
 
 
+# Windows reserved device names (case-insensitive); invalid as a file basename.
+_WIN_RESERVED_BASENAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+
+
+def _sanitize_user_sitemap_filename(name: str) -> str | None:
+    """
+    Turn user input into a single safe *.json basename (under data/sitemaps/).
+    Appends .json when missing. Rejects path tricks, odd characters, and
+    Windows reserved names (CON, NUL, COM1, …).
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    if not name.lower().endswith(".json"):
+        name = name + ".json"
+    base = os.path.basename(name)
+    if base != name:
+        return None
+    if ".." in base or "/" in base or "\\" in base:
+        return None
+    stem = base[:-5]
+    if len(stem) == 0 or len(stem) > 180:
+        return None
+    if not re.match(r"^[a-zA-Z0-9._\- ()]+$", stem):
+        return None
+    safe_stem = re.sub(r"\s+", "_", stem.strip())
+    # Strip trailing dots/spaces (Windows disallows names ending in . or space)
+    safe_stem = safe_stem.rstrip(". ").strip()
+    if not safe_stem:
+        return None
+    if safe_stem.upper() in _WIN_RESERVED_BASENAMES:
+        return None
+    return f"{safe_stem}.json"
+
+
+def _unique_sitemap_path(sitemap_dir: Path, filename: str) -> Path:
+    """Pick a path that does not exist yet (adds -1, -2, … before .json)."""
+    out_path = sitemap_dir / filename
+    if not out_path.exists():
+        return out_path
+    if not filename.lower().endswith(".json"):
+        return out_path
+    stem = filename[:-5]
+    n = 1
+    while True:
+        cand = sitemap_dir / f"{stem}-{n}.json"
+        if not cand.exists():
+            return cand
+        n += 1
+
+
 @app.route("/api/sitemap/save", methods=["POST"])
 def save_sitemap():
     """
-    Save the current UI project state as JSON under backend/output/sitemaps/.
-    Body: { rootUrl, pages, selectedPage, logs, savedAt }
+    Save the current UI project state as JSON under data/sitemaps/ (see get_sitemap_directory).
+
+    Body:
+      Required: rootUrl, pages, logs
+      Optional: savedAt (defaults to server UTC ISO), edges, selectedPage, crawlDepth,
+      selectedPageId, selectedPageUrl, filename (custom basename; .json added if omitted)
     """
     data = request.get_json()
     if not isinstance(data, dict):
         return jsonify({"error": "JSON body required"}), 400
 
-    for key in ("rootUrl", "pages", "logs", "savedAt"):
+    for key in ("rootUrl", "pages", "logs"):
         if key not in data:
             return jsonify({"error": f"missing field: {key}"}), 400
 
@@ -444,7 +519,7 @@ def save_sitemap():
 
     saved_at = str(data.get("savedAt", "")).strip()
     if not saved_at:
-        return jsonify({"error": "savedAt must be non-empty"}), 400
+        saved_at = datetime.now(timezone.utc).isoformat()
 
     selected = data.get("selectedPage")
     if selected is not None and not isinstance(selected, dict):
@@ -454,26 +529,43 @@ def save_sitemap():
     if edges is not None and not isinstance(edges, list):
         return jsonify({"error": "edges must be an array"}), 400
 
+    crawl_depth = data.get("crawlDepth")
+    if crawl_depth is not None:
+        if not isinstance(crawl_depth, int) or crawl_depth not in (1, 2, 3):
+            return jsonify({"error": "crawlDepth must be 1, 2, or 3"}), 400
+
+    sel_id = data.get("selectedPageId")
+    if sel_id is not None and not isinstance(sel_id, str):
+        return jsonify({"error": "selectedPageId must be a string or null"}), 400
+    sel_url = data.get("selectedPageUrl")
+    if sel_url is not None and not isinstance(sel_url, str):
+        return jsonify({"error": "selectedPageUrl must be a string or null"}), 400
+
     payload = {
         "rootUrl": data.get("rootUrl"),
+        "crawlDepth": crawl_depth,
         "pages": data.get("pages"),
-        "selectedPage": selected,
-        "logs": data.get("logs"),
-        "savedAt": saved_at,
         "edges": edges if isinstance(edges, list) else [],
+        "logs": data.get("logs"),
+        "selectedPage": selected,
+        "selectedPageId": sel_id,
+        "selectedPageUrl": sel_url,
+        "savedAt": saved_at,
     }
 
     sitemap_dir = get_sitemap_directory()
     sitemap_dir.mkdir(parents=True, exist_ok=True)
-    stem = _safe_sitemap_filename(saved_at)
-    filename = f"sitemap-{stem}.json"
-    out_path = sitemap_dir / filename
 
-    n = 0
-    while out_path.exists():
-        n += 1
-        filename = f"sitemap-{stem}-{n}.json"
-        out_path = sitemap_dir / filename
+    user_fn = data.get("filename")
+    if isinstance(user_fn, str) and user_fn.strip():
+        filename = _sanitize_user_sitemap_filename(user_fn.strip())
+        if not filename:
+            return jsonify({"error": "invalid filename"}), 400
+    else:
+        stem = _safe_sitemap_filename(saved_at)
+        filename = f"sitemap-{stem}.json"
+
+    out_path = _unique_sitemap_path(sitemap_dir, filename)
 
     try:
         with open(out_path, "w", encoding="utf-8") as f:
@@ -506,7 +598,12 @@ def _is_safe_sitemap_basename(name: str) -> bool:
 
 @app.route("/api/sitemap/list", methods=["GET"])
 def list_sitemaps():
-    """List saved sitemap JSON files (newest first). Includes legacy output/sitemaps in dev."""
+    """
+    GET /api/sitemap/list — list saved sitemap JSON files (newest first).
+
+    Response: { "files": [ { "filename", "path", "modified" }, ... ] }
+    Primary folder: data/sitemaps/; legacy dev copies under output/sitemaps may appear too.
+    """
     paths = iter_sitemap_json_files()
     if not paths:
         return jsonify({"files": []})
@@ -530,7 +627,13 @@ def list_sitemaps():
 
 @app.route("/api/sitemap/load", methods=["GET"])
 def load_sitemap():
-    """Return the contents of one saved sitemap JSON file."""
+    """
+    GET /api/sitemap/load?filename=… — return one saved sitemap JSON object.
+
+    Query: filename must be a safe *.json basename (no path segments).
+    Response: same JSON written by Save Sitemap (rootUrl, crawlDepth, pages, edges, …).
+    Errors: { "error": "…" } with 400 / 404 / 500.
+    """
     filename = (request.args.get("filename") or "").strip()
     if not _is_safe_sitemap_basename(filename):
         return jsonify({"error": "invalid filename"}), 400
@@ -605,6 +708,7 @@ def _append_screenshot_metadata(
     items = _load_screenshot_index()
     rec: dict[str, Any] = {
         "filename": filename,
+        "image_url": image_url,
         "imageUrl": image_url,
         "pageUrl": page_url,
         "pageTitle": (page_title or "").strip() or None,
@@ -623,46 +727,109 @@ def api_screenshot_capture():
     """
     Capture a full-page PNG of a remote URL using headless Chromium (Playwright).
 
-    JSON body: { "url": "https://..." }
-    Returns: { "ok": true, "filename": "...", "imageUrl": "/api/screenshots/..." }
+    JSON body: { "url": "https://...", "pageTitle": "..." (optional) }
+
+    Success: { "ok": true, "filename", "image_url", "saved_path", "page_url" }
+    Failure: { "ok": false, "error": "short_code", "message": "..." }
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
+    page_title = (data.get("pageTitle") or data.get("page_title") or "").strip()
+
+    logger.info("screenshot API: capture requested url=%s", url[:500] if url else "")
+
     if not url:
-        return jsonify({"error": "url is required"}), 400
+        return (
+            jsonify({"ok": False, "error": "url_required", "message": "url is required"}),
+            400,
+        )
     if not url.startswith(("http://", "https://")):
-        return jsonify({"error": "url must be http(s)"}), 400
-    try:
-        path = capture_page_screenshot_png(url)
-    except PlaywrightMissingError:
         return (
             jsonify(
                 {
-                    "error": "playwright_missing",
-                    "message": "Playwright is not installed",
+                    "ok": False,
+                    "error": "invalid_url",
+                    "message": "url must start with http:// or https://",
                 }
             ),
-            503,
+            400,
         )
+
+    try:
+        path = capture_page_screenshot_png(url)
+    except PlaywrightMissingError as e:
+        logger.warning("screenshot API: playwright missing: %s", e)
+        diag = inspect_playwright_environment()
+        payload: dict[str, Any] = {
+            "ok": False,
+            "error": "playwright_missing",
+            "message": (
+                "Playwright is not installed in the active backend Python environment. "
+                "Install the `playwright` package and Chromium into the same interpreter "
+                "shown in python_executable (the one used by desktop/launcher.py)."
+            ),
+            "python_executable": diag.get("python_executable", sys.executable),
+            "playwright_import_ok": diag.get("playwright_import_ok", False),
+            "chromium_available": diag.get("chromium_available"),
+        }
+        if "import_error" in diag:
+            payload["import_error"] = diag["import_error"]
+        if "chromium_error" in diag:
+            payload["chromium_error"] = diag["chromium_error"]
+        return jsonify(payload), 503
     except PageScreenshotError as e:
-        return jsonify({"error": str(e)}), 502
+        logger.warning("screenshot API: capture failed: %s", e)
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "capture_failed",
+                    "message": str(e),
+                    "python_executable": sys.executable,
+                }
+            ),
+            502,
+        )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("screenshot API: unexpected error")
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "internal_error",
+                    "message": str(e),
+                }
+            ),
+            500,
+        )
 
     filename = path.name
-    image_url = f"/api/screenshots/{filename}"
-    meta = _append_screenshot_metadata(
+    saved_abs = str(path.resolve())
+    image_url = f"/screenshots/{filename}"
+    logger.info("screenshot API: saved filename=%s path=%s", filename, saved_abs)
+
+    _append_screenshot_metadata(
         filename=filename,
         image_url=image_url,
         page_url=url,
-        page_title=page_title,
+        page_title=page_title or None,
     )
-    return jsonify({"ok": True, **meta})
+
+    return jsonify(
+        {
+            "ok": True,
+            "filename": filename,
+            "image_url": image_url,
+            "saved_path": saved_abs,
+            "page_url": url,
+        }
+    )
 
 
 @app.route("/api/screenshots/<filename>", methods=["GET"])
+@app.route("/screenshots/<filename>", methods=["GET"])
 def api_screenshot_file(filename: str):
-    """Serve a PNG saved by POST /api/screenshot."""
+    """Serve a PNG saved by POST /api/screenshot (same file under both URL prefixes)."""
     if not _is_safe_screenshot_basename(filename):
         return jsonify({"error": "invalid filename"}), 400
     root = get_screenshots_directory()
@@ -689,16 +856,21 @@ def api_screenshot_list():
     out: list[dict[str, Any]] = []
     for row in items:
         filename = str(row.get("filename") or "").strip()
-        image_url = str(row.get("imageUrl") or "").strip()
+        image_url = str(
+            row.get("image_url") or row.get("imageUrl") or "",
+        ).strip()
         if not _is_safe_screenshot_basename(filename):
             continue
         path = root / filename
         if not path.is_file():
             continue
+        if not image_url:
+            image_url = f"/screenshots/{filename}"
         out.append(
             {
                 "filename": filename,
-                "imageUrl": image_url or f"/api/screenshots/{filename}",
+                "imageUrl": image_url,
+                "image_url": image_url,
                 "pageUrl": str(row.get("pageUrl") or ""),
                 "pageTitle": row.get("pageTitle"),
                 "capturedAt": str(row.get("capturedAt") or ""),
@@ -708,34 +880,72 @@ def api_screenshot_list():
 
 
 # Desktop / PyInstaller: serve the built Vite app from the same origin as the API.
-# Set SPIDER_SCRAPER_SERVE_FRONTEND=1 before importing this module (see desktop/launcher.py).
-if os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND") == "1":
-    _spa_dist = get_frontend_dist_directory()
-    if _spa_dist and _spa_dist.is_dir():
-        _spa_root = _spa_dist.resolve()
+# API routes registered above take precedence. Static SPA routes are registered last.
+# Production desktop env (set only by desktop/launcher.py before import):
+#   SPIDER_SCRAPER_SERVE_FRONTEND=1
+#   SPIDER_SCRAPER_FRONTEND_DIST=<absolute path to frontend/dist>
 
-        @app.route("/", defaults={"path": ""})
-        @app.route("/<path:path>")
-        def serve_spa(path: str):
-            if path.startswith("api"):
-                abort(404)
-            if path:
-                target = (_spa_dist / path).resolve()
-                try:
-                    target.relative_to(_spa_root)
-                except ValueError:
-                    return send_from_directory(str(_spa_dist), "index.html")
-                try:
-                    if target.is_file():
-                        return send_file(target)
-                except OSError:
-                    pass
-            return send_from_directory(str(_spa_dist), "index.html")
-    else:
-        log.warning(
-            "SPIDER_SCRAPER_SERVE_FRONTEND is set but frontend dist is missing. "
-            "Build with: cd frontend && set VITE_DESKTOP_MODE=1 && npm run build"
-        )
+
+def _spa_dist_for_request() -> Path | None:
+    if os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND") != "1":
+        return None
+    raw = os.environ.get("SPIDER_SCRAPER_FRONTEND_DIST")
+    if not raw:
+        return None
+    p = Path(raw).expanduser().resolve()
+    return p if p.is_dir() else None
+
+
+def _serve_spa_impl(path: str):
+    """Serve files under dist or fall back to index.html for client-side routes."""
+    spa_root = _spa_dist_for_request()
+    if spa_root is None or not spa_root.is_dir():
+        abort(404)
+    if path == "api" or path.startswith("api/"):
+        abort(404)
+    root = spa_root.resolve()
+    if path:
+        target = (spa_root / path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return send_from_directory(str(spa_root), "index.html")
+        try:
+            if target.is_file():
+                return send_file(target)
+        except OSError:
+            pass
+    return send_from_directory(str(spa_root), "index.html")
+
+
+@app.route("/__desktop_debug")
+def desktop_debug():
+    """JSON snapshot of desktop SPA env (read directly from os.environ)."""
+    resolved = _spa_dist_for_request()
+    idx = (resolved / "index.html") if resolved else None
+    return jsonify(
+        {
+            "SPIDER_SCRAPER_SERVE_FRONTEND": os.environ.get("SPIDER_SCRAPER_SERVE_FRONTEND"),
+            "SPIDER_SCRAPER_FRONTEND_DIST": os.environ.get("SPIDER_SCRAPER_FRONTEND_DIST"),
+            "resolved_spa_root": str(resolved) if resolved else None,
+            "resolved_spa_root_exists": resolved.is_dir() if resolved else False,
+            "index_html_exists": idx.is_file() if idx else False,
+            "index_html_path": str(idx) if idx else None,
+            "request_path": request.path,
+        }
+    )
+
+
+@app.route("/")
+def serve_spa_root():
+    """Root URL: always serve index.html when desktop SPA mode is active."""
+    return _serve_spa_impl("")
+
+
+@app.route("/<path:path>")
+def serve_spa_catchall(path: str):
+    """Assets and deep links; unknown paths fall back to index.html inside _serve_spa_impl."""
+    return _serve_spa_impl(path)
 
 
 if __name__ == "__main__":

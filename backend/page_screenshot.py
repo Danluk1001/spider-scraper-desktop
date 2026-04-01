@@ -7,8 +7,10 @@ Requires: pip install playwright && playwright install chromium
 from __future__ import annotations
 
 import secrets
+import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from data_paths import get_screenshots_directory
 
@@ -19,6 +21,42 @@ class PageScreenshotError(Exception):
 
 class PlaywrightMissingError(PageScreenshotError):
     """Raised when the ``playwright`` package is not installed (ImportError)."""
+
+
+def inspect_playwright_environment() -> dict[str, Any]:
+    """
+    Introspection for the *same* Python process that runs Flask (desktop or dev).
+
+    Returns:
+      - python_executable: sys.executable
+      - playwright_import_ok: whether ``playwright.sync_api`` imports
+      - chromium_available: True/False after a minimal launch attempt, or None if import failed
+      - import_error / chromium_error: short strings when applicable
+    """
+    out: dict[str, Any] = {
+        "python_executable": sys.executable,
+        "playwright_import_ok": False,
+        "chromium_available": None,
+    }
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        out["import_error"] = str(e).strip() or e.__class__.__name__
+        return out
+
+    out["playwright_import_ok"] = True
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                browser.close()
+            except Exception:
+                pass
+        out["chromium_available"] = True
+    except Exception as e:
+        out["chromium_available"] = False
+        out["chromium_error"] = (str(e).strip() or e.__class__.__name__)[:800]
+    return out
 
 
 def capture_page_screenshot_png(url: str, *, timeout_ms: int = 90_000) -> Path:
