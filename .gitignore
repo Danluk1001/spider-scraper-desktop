@@ -15,6 +15,12 @@ Thumbs.db
 # Logs
 *.log
 
+# Windows installer build artifacts (Inno Setup)
+desktop/installer/stage/
+desktop/installer/output/
+# Local Playwright browser cache for packaging (large)
+/ms-playwright/
+
 # Output folders
 output/*
 data/screenshots/*

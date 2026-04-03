@@ -14,6 +14,8 @@
 import os
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all
+
 block_cipher = None
 
 _repo_root = Path(__file__).resolve().parent.parent
@@ -32,11 +34,15 @@ if _resources.is_dir():
 if _bundle_playwright and _playwright.is_dir():
     _datas.append((str(_playwright), "ms-playwright"))
 
+# Ship Playwright Python package + native driver bits into the EXE (Chromium still
+# must exist under PLAYWRIGHT_BROWSERS_PATH — bundle ms-playwright or run install).
+_pw_datas, _pw_binaries, _pw_hidden = collect_all("playwright")
+
 a = Analysis(
     [str(_launcher)],
     pathex=[str(_repo_root / "backend"), str(_repo_root)],
-    binaries=[],
-    datas=_datas,
+    binaries=_pw_binaries,
+    datas=_datas + _pw_datas,
     hiddenimports=[
         "app",
         "app_config",
@@ -50,7 +56,9 @@ a = Analysis(
         "clr_loader",
         "pythonnet",
         "waitress",
-    ],
+        "greenlet",
+    ]
+    + list(_pw_hidden),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

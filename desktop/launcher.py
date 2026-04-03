@@ -63,9 +63,22 @@ def _apply_packaged_env(root: Path, dev: bool) -> None:
     os.environ["SPIDER_SCRAPER_FRONTEND_DIST"] = str(dist)
     os.environ.setdefault("SPIDER_SCRAPER_DEBUG", "0")
 
+    # Playwright: Chromium must live on a path the process can read. Bundled build may
+    # ship ms-playwright next to extracted resources; otherwise use a writable per-user
+    # folder so `python -m playwright install chromium` (same Python as the app) works.
     bundled_pw = root / "ms-playwright"
     if bundled_pw.is_dir():
-        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled_pw))
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled_pw.resolve()))
+    elif getattr(sys, "frozen", False):
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            persistent = Path(local) / "SpiderScraper" / "ms-playwright"
+            try:
+                persistent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+            else:
+                os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(persistent.resolve()))
 
 
 def _wait_for_http(url: str, timeout: float = 90.0) -> bool:
