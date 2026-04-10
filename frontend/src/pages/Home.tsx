@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import axios from "axios";
 import "../home.css";
@@ -2554,6 +2555,283 @@ function VideoPreviewCell({ url }: { url: string }) {
   );
 }
 
+/** Root URL field with a right-click menu (PyWebView often hides the native browser menu). */
+function RootUrlToolbarInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onPointer = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || inputRef.current?.contains(t)) return;
+      setMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onPointer, true);
+    };
+  }, [menu]);
+
+  const getSel = () => {
+    const el = inputRef.current;
+    if (!el) return { start: 0, end: 0 };
+    return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 };
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const runCut = async () => {
+    const { start, end } = getSel();
+    if (start === end) {
+      setMenu(null);
+      return;
+    }
+    const sel = value.slice(start, end);
+    try {
+      await navigator.clipboard.writeText(sel);
+    } catch {
+      setMenu(null);
+      return;
+    }
+    onChange(value.slice(0, start) + value.slice(end));
+    setMenu(null);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      el?.focus();
+      el?.setSelectionRange(start, start);
+    });
+  };
+
+  const runCopy = async () => {
+    const { start, end } = getSel();
+    if (start === end) {
+      setMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value.slice(start, end));
+    } catch {
+      /* clipboard may be blocked */
+    }
+    setMenu(null);
+  };
+
+  const runPaste = async () => {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setMenu(null);
+      return;
+    }
+    const { start, end } = getSel();
+    onChange(value.slice(0, start) + text + value.slice(end));
+    const pos = start + text.length;
+    setMenu(null);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      el?.focus();
+      el?.setSelectionRange(pos, pos);
+    });
+  };
+
+  const runSelectAll = () => {
+    const el = inputRef.current;
+    el?.focus();
+    el?.setSelectionRange(0, value.length);
+    setMenu(null);
+  };
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        className="scraper-root-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onContextMenu={handleContextMenu}
+      />
+      {menu ? (
+        <div
+          ref={menuRef}
+          className="scraper-root-ctx-menu"
+          role="menu"
+          aria-label="Root URL edit menu"
+          style={{
+            position: "fixed",
+            left: Math.min(menu.x, typeof window !== "undefined" ? window.innerWidth - 168 : menu.x),
+            top: Math.min(menu.y, typeof window !== "undefined" ? window.innerHeight - 220 : menu.y),
+            zIndex: 20000,
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={() => void runCut()}
+          >
+            Cut
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={() => void runCopy()}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={() => void runPaste()}
+          >
+            Paste
+          </button>
+          <div className="scraper-root-ctx-menu__sep" aria-hidden />
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={runSelectAll}
+          >
+            Select all
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** Read-only <pre> with right-click Copy / Select all (desktop WebView often hides native menu). */
+function SelectablePreWithContextMenu({
+  style,
+  children,
+}: {
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onPointer = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || preRef.current?.contains(t)) return;
+      setMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onPointer, true);
+    };
+  }, [menu]);
+
+  const selectedText = () => window.getSelection()?.toString() ?? "";
+
+  const runCopy = async () => {
+    const t = selectedText();
+    if (!t) {
+      setMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(t);
+    } catch {
+      /* clipboard blocked */
+    }
+    setMenu(null);
+  };
+
+  const runSelectAll = () => {
+    const el = preRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    setMenu(null);
+  };
+
+  return (
+    <>
+      <pre
+        ref={preRef}
+        style={{
+          margin: 0,
+          cursor: "text",
+          userSelect: "text",
+          WebkitUserSelect: "text",
+          ...style,
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        {children}
+      </pre>
+      {menu ? (
+        <div
+          ref={menuRef}
+          className="scraper-root-ctx-menu"
+          role="menu"
+          aria-label="Text copy menu"
+          style={{
+            position: "fixed",
+            left: Math.min(menu.x, typeof window !== "undefined" ? window.innerWidth - 168 : menu.x),
+            top: Math.min(menu.y, typeof window !== "undefined" ? window.innerHeight - 120 : menu.y),
+            zIndex: 20000,
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={() => void runCopy()}
+          >
+            Copy
+          </button>
+          <div className="scraper-root-ctx-menu__sep" aria-hidden />
+          <button
+            type="button"
+            role="menuitem"
+            className="scraper-root-ctx-menu__item"
+            onClick={runSelectAll}
+          >
+            Select all
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export default function Home() {
   const [rootUrl, setRootUrl] = useState("https://irvington.k12.nj.us/");
   const [pages, setPages] = useState<ScrapedPage[]>([]);
@@ -2625,7 +2903,6 @@ export default function Home() {
 
   const tabs = [
     "Text View",
-    "XML View",
     "HTML",
     "CSS",
     "JavaScript",
@@ -3288,11 +3565,7 @@ export default function Home() {
 
         <label style={{ fontSize: "14px", color: "#374151" }}>Root:</label>
 
-        <input
-          className="scraper-root-input"
-          value={rootUrl}
-          onChange={(e) => setRootUrl(e.target.value)}
-        />
+        <RootUrlToolbarInput value={rootUrl} onChange={setRootUrl} />
 
         <label
           htmlFor="crawl-depth"
@@ -3847,9 +4120,8 @@ export default function Home() {
             ) : !selectedPage ? (
               <div style={{ color: "#6b7280" }}>Scrape a site to view details here.</div>
             ) : activeTab === "Text View" ? (
-              <pre
+              <SelectablePreWithContextMenu
                 style={{
-                  margin: 0,
                   fontFamily: "Consolas, monospace",
                   whiteSpace: "pre-wrap",
                 }}
@@ -3899,7 +4171,7 @@ Paragraph Count: ${selectedPage.paragraph_count}
 ${selectedPage.file_metadata && Object.keys(selectedPage.file_metadata).length > 0 ? `File metadata: ${JSON.stringify(selectedPage.file_metadata)}\n` : ""}
 ${selectedPage.extracted_text ? `Extracted text:\n${selectedPage.extracted_text}\n\n` : ""}Preview:
 ${selectedPage.preview.join("\n\n")}`}
-              </pre>
+              </SelectablePreWithContextMenu>
             ) : activeTab === "Metadata" ? (
               <PageMetadataPanel page={selectedPage} />
             ) : activeTab === "HTML" ? (

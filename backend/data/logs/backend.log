@@ -355,3 +355,38 @@ NameError: name 'page_title' is not defined
 2026-04-01 17:18:51,259 INFO app: screenshot API: capture requested url=https://danluk1001.github.io/github-portfolio/applications.html
 2026-04-01 17:18:51,261 WARNING app: screenshot API: playwright missing: Playwright is not installed
 2026-04-01 19:03:41,568 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-04 23:02:30,896 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-04 23:54:03,894 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-04 23:56:15,827 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-04 23:57:56,673 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-04 23:57:57,351 DEBUG pywebview: Using WinForms / Chromium
+2026-04-04 23:57:58,100 DEBUG pywebview: before_load event fired. injecting pywebview object
+2026-04-04 23:57:58,101 DEBUG pywebview: Loading JS files from C:\Users\Danlu\AppData\Roaming\Python\Python313\site-packages\webview\js
+2026-04-04 23:57:58,165 DEBUG pywebview: _pywebviewready event fired
+2026-04-04 23:57:58,170 DEBUG pywebview: loaded event fired
+2026-04-05 00:00:15,153 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-05 00:00:15,881 DEBUG pywebview: Using WinForms / Chromium
+2026-04-05 00:00:16,605 DEBUG pywebview: before_load event fired. injecting pywebview object
+2026-04-05 00:00:16,606 DEBUG pywebview: Loading JS files from C:\Users\Danlu\AppData\Roaming\Python\Python313\site-packages\webview\js
+2026-04-05 00:00:16,678 DEBUG pywebview: _pywebviewready event fired
+2026-04-05 00:00:16,683 DEBUG pywebview: loaded event fired
+2026-04-05 00:01:18,273 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-05 00:01:18,922 DEBUG pywebview: Using WinForms / Chromium
+2026-04-05 00:01:19,617 DEBUG pywebview: before_load event fired. injecting pywebview object
+2026-04-05 00:01:19,618 DEBUG pywebview: Loading JS files from C:\Users\Danlu\AppData\Roaming\Python\Python313\site-packages\webview\js
+2026-04-05 00:01:19,676 DEBUG pywebview: _pywebviewready event fired
+2026-04-05 00:01:19,681 DEBUG pywebview: loaded event fired
+2026-04-05 00:20:38,279 INFO app: screenshot API: capture requested url=https://irvington.k12.nj.us/wp-content/uploads/2023/10/23-24_Image-Release-Form.pdf
+2026-04-05 00:20:38,280 WARNING app: screenshot API: playwright missing: Playwright is not installed
+2026-04-08 00:27:35,205 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-08 00:27:37,152 DEBUG pywebview: Using WinForms / Chromium
+2026-04-08 00:27:38,443 DEBUG pywebview: before_load event fired. injecting pywebview object
+2026-04-08 00:27:38,448 DEBUG pywebview: Loading JS files from C:\Users\Danlu\AppData\Roaming\Python\Python313\site-packages\webview\js
+2026-04-08 00:27:38,684 DEBUG pywebview: _pywebviewready event fired
+2026-04-08 00:27:38,688 DEBUG pywebview: loaded event fired
+2026-04-08 14:20:55,935 INFO waitress: Serving on http://127.0.0.1:5000
+2026-04-08 14:20:57,137 DEBUG pywebview: Using WinForms / Chromium
+2026-04-08 14:20:58,621 DEBUG pywebview: before_load event fired. injecting pywebview object
+2026-04-08 14:20:58,622 DEBUG pywebview: Loading JS files from C:\Users\Danlu\AppData\Roaming\Python\Python313\site-packages\webview\js
+2026-04-08 14:20:58,779 DEBUG pywebview: _pywebviewready event fired
+2026-04-08 14:20:58,782 DEBUG pywebview: loaded event fired

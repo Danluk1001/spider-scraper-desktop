@@ -4,6 +4,9 @@ Spider Scraper desktop shell: Flask backend + PyWebView window.
 Usage (development, from repo root):
   python desktop/launcher.py --dev          # Vite HMR on :5173, Flask on :5000
   python desktop/launcher.py                # Flask serves frontend/dist + API on one port
+
+After changing the React UI, rebuild for production mode:
+  cd frontend && set VITE_DESKTOP_MODE=1 && npm run build
 """
 
 from __future__ import annotations
@@ -258,8 +261,29 @@ def main() -> None:
         min_size=(1200, 700),
     )
 
+    # Text selection + right-click (Root URL, Text View copy menu, native Cut/Copy/Paste):
+    # WebView2 often suppresses menus when debug=False. debug=True restores native context
+    # menus; the SPA also provides custom Copy/Select-all menus. Keep DevTools closed on start.
+    # Set SPIDER_SCRAPER_WEBVIEW_DEBUG=0 for debug=False (stricter / no F12 menu).
+    _wv_debug = os.environ.get("SPIDER_SCRAPER_WEBVIEW_DEBUG", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if hasattr(webview, "settings"):
+        try:
+            webview.settings["SHOW_DEFAULT_MENUS"] = True
+        except (TypeError, KeyError, AttributeError):
+            pass
+        if _wv_debug:
+            try:
+                webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
+            except (TypeError, KeyError, AttributeError):
+                pass
+
     try:
-        webview.start(debug=False)
+        webview.start(debug=_wv_debug)
     finally:
         if vite_proc:
             vite_proc.terminate()
